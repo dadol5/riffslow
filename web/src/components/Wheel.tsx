@@ -108,8 +108,8 @@ function Pin({
       <g className={`pin-body${holding ? ' holding' : ''}`}>
         {/* 터치 판정 영역: 핀 원 중심에 정렬 — 링 쪽으로 침범하면 탐색 시 오터치되므로 금지 */}
         <circle className="pin-hit" cy={-15} r={22} fill="transparent" />
-        {/* 원 (사용자 요청으로 원본보다 크게 — 약 1.45배) */}
-        <circle cy={-15} r={16} fill="none" strokeWidth={3.2} />
+        {/* 원 (사용자 요청 크기 — 꼬리/심볼보다 살짝 작게) */}
+        <circle cy={-15} r={14} fill="none" strokeWidth={3.2} />
         {/* 꼬리 화살 (링 방향) */}
         <path
           d="M -11 5 L 0 17 L 11 5"
