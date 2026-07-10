@@ -1,0 +1,60 @@
+# GitHub Pages 자동 배포 파이프라인
+# main 브랜치에 푸시될 때마다: 빌드 → Pages에 배포
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Actions 탭에서 수동 실행도 가능
+
+# Pages 배포에 필요한 권한
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 동시에 여러 배포가 겹치지 않도록
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  # 1단계: 빌드
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web # 프론트엔드는 web/ 하위에 있음
+    steps:
+      - name: 소스 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node.js 설치
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: 빌드
+        run: npm run build
+
+      - name: 빌드 결과물 업로드
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  # 2단계: 배포
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Pages에 배포
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -3,7 +3,9 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // GitHub Pages는 /riffslow/ 하위 경로에서 서빙됨 (빌드에만 적용, 로컬 개발은 루트 그대로)
+  base: command === 'build' ? '/riffslow/' : '/',
   plugins: [
     react(),
     // PWA: 홈 화면 설치 + 오프라인 캐싱 (서비스 워커)
@@ -38,4 +40,4 @@ export default defineConfig({
     // ffmpeg.wasm은 내부에서 웹워커를 쓰므로 Vite 사전 번들링에서 제외 (공식 권장 설정)
     exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
   },
-})
+}))
