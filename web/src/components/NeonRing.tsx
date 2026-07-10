@@ -16,9 +16,10 @@ const GLOW_LAYERS: [number, number][] = [
 interface NeonRingProps {
   angleDeg: number // 하이라이트 각도 (이 방향이 가장 밝음)
   id: string // 그라데이션 id (SVG마다 고유)
+  radius?: number // 링 반지름 (기본 = 공용 RADIUS, P-01은 축소값 전달)
 }
 
-function NeonRing({ angleDeg, id }: NeonRingProps) {
+function NeonRing({ angleDeg, id, radius = RADIUS }: NeonRingProps) {
   const rotate = `rotate(${angleDeg} ${CENTER} ${CENTER})`
   return (
     <>
@@ -36,7 +37,7 @@ function NeonRing({ angleDeg, id }: NeonRingProps) {
           key={width}
           cx={CENTER}
           cy={CENTER}
-          r={RADIUS}
+          r={radius}
           fill="none"
           stroke={`url(#${id})`}
           strokeWidth={width}

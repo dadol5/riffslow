@@ -247,18 +247,24 @@
 
 .pin-symbol {
   fill: currentColor;
-  font-size: 13px;
+  font-size: 17px; /* S/E 등 글자 심볼 기본 크기 */
   font-weight: bold;
 }
 
-/* 1초 홀드 삭제: 누르는 동안 점점 커지며 흐려짐 (Wheel.tsx의 HOLD_DELETE_MS와 싱크) */
+/* 화살표(›‹)만 크게 — 글자보다 글리프가 작아서 안 보인다는 사용자 피드백 */
+.pin-symbol.arrow {
+  font-size: 28px;
+}
+
+/* 0.7초 홀드 삭제: 누르는 동안 커지며 흐려짐 (Wheel.tsx의 HOLD_DELETE_MS와 싱크)
+   누르자마자 확 커지기 시작해야 "삭제 진행 중" 피드백이 즉시 옴 (초반 변화 크게) */
 .pin-body {
   transform-box: fill-box;
   transform-origin: center;
 }
 
 .pin-body.holding {
-  animation: pin-hold-delete 1s linear forwards;
+  animation: pin-hold-delete 0.7s ease-out forwards;
 }
 
 @keyframes pin-hold-delete {
@@ -266,8 +272,12 @@
     transform: scale(1);
     opacity: 1;
   }
+  30% {
+    transform: scale(1.45);
+    opacity: 0.7;
+  }
   100% {
-    transform: scale(2);
+    transform: scale(2.1);
     opacity: 0.05;
   }
 }
@@ -459,8 +469,13 @@
 
 .pin-icon text {
   fill: currentColor;
-  font-size: 10px;
+  font-size: 10px; /* viewBox(28폭) 기준 — S/E 등 글자 심볼 기본 */
   font-weight: bold;
+}
+
+/* 화살표(›‹)만 크게 — 링 위 핀과 동일 규칙 */
+.pin-icon text.arrow {
+  font-size: 14px;
 }
 
 /* 글자형 버튼 (✕ 전체 삭제) */

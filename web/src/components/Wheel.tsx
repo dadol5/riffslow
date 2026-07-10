@@ -1,6 +1,10 @@
 import { useRef, useState } from 'react'
 import { formatTime } from '../utils/time'
-import { SIZE, CENTER, RADIUS, TOUCH_BAND, polar } from './wheelGeo'
+import { SIZE, CENTER, TOUCH_BAND, polar } from './wheelGeo'
+
+// P-01 진행 휠 전용 링 반지름 — 원본 실측 비율(지름 = SVG 폭의 76%)로 축소
+// (P-02 템포 휠은 공용 RADIUS 150 유지 — 사용자 결정)
+const WHEEL_R = 137
 import GripGlow from './GripGlow'
 import NeonRing from './NeonRing'
 import type { Loop } from '../db/library'
@@ -9,8 +13,8 @@ import type { Loop } from '../db/library'
 // — 발광 각도가 "곡 전체=360°" 기준이므로, 조작도 같은 비율이어야 손가락을 따라옴
 // — 가속 불필요 (한 바퀴면 곡 끝까지 가므로), 미세 탐색은 마커 탭이 보조
 
-// 마커 홀드 삭제: 길게 누르는 시간 (사용자 요청으로 1초 — App.css의 pin-hold-delete 애니메이션과 싱크)
-const HOLD_DELETE_MS = 1000
+// 마커 홀드 삭제: 길게 누르는 시간 (사용자 요청으로 0.7초 — App.css의 pin-hold-delete 애니메이션과 싱크)
+const HOLD_DELETE_MS = 700
 // 홀드가 아니라 "탭"으로 인정하는 최대 시간
 const TAP_MS = 300
 
@@ -38,7 +42,7 @@ function timeToAngle(time: number, duration: number): number {
 
 // 링 바깥에 붙는 핀 글리프 (원본 재현: 원 + 꼬리 화살 — 꼬리가 링 위 지점을 가리킴)
 // 인터랙션: 짧은 탭 = onTap / 1초 홀드 = 커지며 흐려지다 삭제 (도중에 떼면 취소)
-const PIN_OFFSET = 18 // 링에서 핀 중심까지 거리
+const PIN_OFFSET = 30 // 링에서 핀 앵커까지 거리 (링~꼬리 끝 공백 13px — 링 잡을 때 핀 오터치 방지)
 
 function Pin({
   angleDeg,
@@ -90,7 +94,7 @@ function Pin({
     }
   }
 
-  const { x, y } = polar(angleDeg, RADIUS + PIN_OFFSET)
+  const { x, y } = polar(angleDeg, WHEEL_R + PIN_OFFSET)
   return (
     <g
       className={`pin${onTap || onHoldDelete ? ' tappable' : ''}`}
@@ -102,20 +106,25 @@ function Pin({
     >
       {/* 홀드 삭제 애니메이션은 안쪽 그룹에 적용 (배치 transform과 분리) */}
       <g className={`pin-body${holding ? ' holding' : ''}`}>
-        {/* 터치 판정 영역 (보이지 않아야 함 — pin-hit 클래스로 테두리 제외) */}
-        <circle className="pin-hit" cy={-5} r={22} fill="transparent" />
-        {/* 원 (원본 실측: 핀 지름 ≈ 링의 8%) */}
-        <circle cy={-10} r={11} fill="none" strokeWidth={2.4} />
+        {/* 터치 판정 영역: 핀 원 중심에 정렬 — 링 쪽으로 침범하면 탐색 시 오터치되므로 금지 */}
+        <circle className="pin-hit" cy={-15} r={22} fill="transparent" />
+        {/* 원 (사용자 요청으로 원본보다 크게 — 약 1.45배) */}
+        <circle cy={-15} r={16} fill="none" strokeWidth={3.2} />
         {/* 꼬리 화살 (링 방향) */}
         <path
-          d="M -8 3.5 L 0 14 L 8 3.5"
+          d="M -11 5 L 0 17 L 11 5"
           fill="none"
-          strokeWidth={2.4}
+          strokeWidth={3.2}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
         {symbol && (
-          <text y={-5} textAnchor="middle" className="pin-symbol">
+          // 화살표(›‹)만 크게, 글자(S/E)는 기본 크기 (사용자 요청 — 크기별 세로 정렬 보정)
+          <text
+            y={symbol === '›' || symbol === '‹' ? -5 : -9}
+            textAnchor="middle"
+            className={`pin-symbol${symbol === '›' || symbol === '‹' ? ' arrow' : ''}`}
+          >
             {symbol}
           </text>
         )}
@@ -124,8 +133,8 @@ function Pin({
   )
 }
 
-// 핀 원들이 놓이는 반경 (루프 연결선이 이 반경을 따라 그려짐)
-const PIN_RING_R = RADIUS + PIN_OFFSET + 10
+// 핀 원들이 놓이는 반경 (루프 연결선이 이 반경을 따라 그려짐 — 핀 원 중심 cy=-15와 싱크)
+const PIN_RING_R = WHEEL_R + PIN_OFFSET + 15
 
 // 두 각도 사이를 임의 반경으로 잇는 호 (원본: 루프 핀끼리 링 바깥에서 선으로 연결됨)
 function arcBetweenAt(radius: number, startAngle: number, endAngle: number): string {
@@ -173,7 +182,7 @@ function Wheel({
     // 터치 시작점이 링 위일 때만 회전 판정 (설계서 확정 사항)
     // 링 밖/중앙 터치는 그대로 흘려보냄 → 부모(App)의 페이지 스와이프로 판정됨
     const dist = Math.sqrt(x * x + y * y)
-    if (dist < RADIUS - TOUCH_BAND || dist > RADIUS + TOUCH_BAND) return
+    if (dist < WHEEL_R - TOUCH_BAND || dist > WHEEL_R + TOUCH_BAND) return
 
     // 링을 잡았다 = 휠 제스처 우선 → 페이지 스와이프로 번지지 않게 차단 (설계서 확정)
     e.stopPropagation()
@@ -223,7 +232,7 @@ function Wheel({
       onPointerCancel={handleUp}
     >
       {/* 링: 가는 네온 선 + 발광 — 재생 위치 방향이 가장 밝음 (원본 재현) */}
-      <NeonRing angleDeg={progressAngle} id="ring-grad-progress" />
+      <NeonRing angleDeg={progressAngle} id="ring-grad-progress" radius={WHEEL_R} />
 
       {/* 구간 루프들: 발광 호 + 시작(›)/끝(‹) 핀 — 여러 개 가능 */}
       {duration > 0 &&
@@ -262,7 +271,7 @@ function Wheel({
 
       {/* 재생 위치 하이라이트: 링 위의 하얗게 빛나는 구간 (잡고 돌리는 동안 강렬해짐) */}
       {duration > 0 && (
-        <GripGlow angleDeg={progressAngle} id="grip-bloom-progress" active={grabbing} />
+        <GripGlow angleDeg={progressAngle} id="grip-bloom-progress" active={grabbing} radius={WHEEL_R} />
       )}
 
       {/* 위치 마커 핀 (빈 원 + 꼬리): 탭 = 이동 / 홀드 = 삭제 */}

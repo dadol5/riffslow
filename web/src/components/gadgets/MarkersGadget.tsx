@@ -15,7 +15,13 @@ function PinIcon({ symbol }: { symbol?: string }) {
         strokeLinejoin="round"
       />
       {symbol && (
-        <text x="14" y="16" textAnchor="middle">
+        // 화살표(›‹)만 크게 — 링 위 핀과 동일 규칙
+        <text
+          x="14"
+          y="16"
+          textAnchor="middle"
+          className={symbol === '›' || symbol === '‹' ? 'arrow' : undefined}
+        >
           {symbol}
         </text>
       )}

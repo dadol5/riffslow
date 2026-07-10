@@ -24,18 +24,21 @@ interface GripGlowProps {
   angleDeg: number // 하이라이트 중심 각도
   id: string // 그라데이션 id 접두어 (SVG마다 고유해야 함)
   active?: boolean // 손가락으로 잡고 제어 중인지
+  radius?: number // 링 반지름 (기본 = 공용 RADIUS, P-01은 축소값 전달)
 }
 
-function GripGlow({ angleDeg, id, active }: GripGlowProps) {
+function GripGlow({ angleDeg, id, active, radius = RADIUS }: GripGlowProps) {
   const layers = active ? LAYERS_ACTIVE : LAYERS_IDLE
   const tailSpread = 18 // 그라데이션 축(호 양 끝) 폭 — 잡아도 퍼지지 않음
 
-  const center = polar(angleDeg, RADIUS)
-  const tail1 = polar(angleDeg - tailSpread)
-  const tail2 = polar(angleDeg + tailSpread)
+  const center = polar(angleDeg, radius)
+  const tail1 = polar(angleDeg - tailSpread, radius)
+  const tail2 = polar(angleDeg + tailSpread, radius)
 
   return (
-    <g>
+    // 순수 장식이므로 터치를 통과시킴 — 재생 위치와 겹친 핀이 안 눌리던 버그 수정
+    // (휠 회전 판정은 SVG 레벨에서 각도/거리로 하므로 영향 없음)
+    <g pointerEvents="none">
       <defs>
         {/* 구름 블룸용 방사형 그라데이션 (흰색 → 투명) */}
         <radialGradient id={`${id}-cloud`}>
@@ -68,7 +71,7 @@ function GripGlow({ angleDeg, id, active }: GripGlowProps) {
       {layers.map(([spread, width, opacity]) => (
         <path
           key={width}
-          d={arcPath(angleDeg, spread)}
+          d={arcPath(angleDeg, spread, radius)}
           fill="none"
           stroke={`url(#${id}-line)`}
           strokeWidth={width}
