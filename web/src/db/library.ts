@@ -7,11 +7,17 @@
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 
+// 구간 루프: 여러 개 존재 가능, end가 null이면 시작점만 찍힌 미완성 루프
+export interface Loop {
+  start: number // 루프 시작 (초)
+  end: number | null // 루프 끝 (초) — null = 아직 끝점 미지정
+}
+
 // 곡별 저장 설정 (원본 앱에 없는 개선 — 자동 저장/복원)
 export interface TrackSettings {
   tempo: number // 템포 % (100 = 원속도)
-  loopA: number | null // A/B 루프 (초)
-  loopB: number | null
+  pitch: number // 피치 (반음 단위, ±12) — 구버전 저장 데이터엔 없을 수 있음 (?? 0 처리)
+  loops: Loop[] // 구간 루프 목록 (구버전 데이터는 loopA/loopB 단일 루프 — 복원 시 변환)
   posMarkers: number[] // 위치 마커 목록 (초)
   trackS: number | null // 시작(S)/끝(E) 마커 (초)
   trackE: number | null
@@ -28,8 +34,8 @@ export interface TrackMeta {
 export function defaultSettings(): TrackSettings {
   return {
     tempo: 100,
-    loopA: null,
-    loopB: null,
+    pitch: 0,
+    loops: [],
     posMarkers: [],
     trackS: null,
     trackE: null,

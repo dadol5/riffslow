@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Player } from './audio/player'
-import Wheel from './components/Wheel'
+import TopBar from './components/TopBar'
+import ProgressPage from './components/ProgressPage'
+import TempoPage from './components/TempoPage'
+import TrackListPage from './components/TrackListPage'
+import GadgetBar, { type GadgetId } from './components/GadgetBar'
+import VolumeGadget from './components/gadgets/VolumeGadget'
+import MarkersGadget from './components/gadgets/MarkersGadget'
+import PitchGadget from './components/gadgets/PitchGadget'
 import {
   addTrack,
   deleteTrack,
@@ -8,10 +15,16 @@ import {
   getTrack,
   getTrackFile,
   updateSettings,
+  type Loop,
   type TrackMeta,
 } from './db/library'
-import { formatTime } from './utils/time'
 import './App.css'
+
+// 메인 페이지 구성: 0=P-01 진행 휠, 1=P-02 템포 (곡 목록은 Playlist 가젯으로)
+const PAGE_COUNT = 2
+
+// 마지막 재생 곡 기억용 localStorage 키 (다음 실행 시 자동 로드)
+const LAST_TRACK_KEY = 'riffslow-last-track'
 
 function App() {
   // Player 인스턴스는 앱 전체에서 1개만 유지 (렌더링마다 새로 만들지 않도록 ref에 보관)
@@ -29,27 +42,126 @@ function App() {
   const [position, setPosition] = useState(0) // 현재 재생 위치 (초)
   const [duration, setDuration] = useState(0) // 곡 길이 (초)
   const [tempo, setTempo] = useState(100) // 템포 % (100 = 원속도)
-  const [loopA, setLoopA] = useState<number | null>(null) // 루프 시작 지점 (초)
-  const [loopB, setLoopB] = useState<number | null>(null) // 루프 끝 지점 (초)
+  const [loops, setLoops] = useState<Loop[]>([]) // 구간 루프 목록 (여러 개 가능)
   const [posMarkers, setPosMarkers] = useState<number[]>([]) // 위치 마커 목록 (초)
   const [trackS, setTrackS] = useState<number | null>(null) // 시작(S) 마커 (초)
   const [trackE, setTrackE] = useState<number | null>(null) // 끝(E) 마커 (초)
   const [tracks, setTracks] = useState<TrackMeta[]>([]) // 라이브러리 곡 목록
   const [currentId, setCurrentId] = useState<number | null>(null) // 현재 곡의 라이브러리 id
+  const [page, setPage] = useState(0) // 현재 페이지 (기본 진입 = P-01, 설계서 확정)
+  const [activeGadget, setActiveGadget] = useState<GadgetId>('volume') // 선택된 가젯 탭
+  const [showPlaylist, setShowPlaylist] = useState(false) // 곡 목록 시트(레이어) 열림 여부
 
-  // 앱 시작 시 저장된 곡 목록 불러오기 (빈 배열 의존성 = 최초 1회만 실행)
+  // 가젯 탭 선택: Playlist는 시트 토글, 나머지는 패널 전환
+  const handleGadgetSelect = (id: GadgetId) => {
+    if (id === 'playlist') {
+      setShowPlaylist((open) => !open)
+    } else {
+      setActiveGadget(id)
+    }
+  }
+  const [volume, setVolume] = useState(100) // 마스터 볼륨 % (전역 설정)
+  const [pitch, setPitch] = useState(0) // 피치 반음 (곡별 저장)
+
+  // ── 페이지 스와이프: 손가락을 따라 실시간으로 끌리고, 놓으면 스냅 ──
+  // (휠 링에서 시작한 터치는 Wheel이 stopPropagation으로 차단 → 여기 안 옴)
+  // 성능: 드래그 중에는 React 재렌더링 없이 DOM 스타일을 직접 갱신
+  const stripRef = useRef<HTMLDivElement | null>(null)
+  const swipeRef = useRef<{
+    x: number
+    y: number
+    t: number // 시작 시각 (플릭 속도 계산용)
+    active: boolean // 가로 제스처로 확정됐는지
+  } | null>(null)
+
+  // 페이지 스트립 위치 지정 (offsetPx = 드래그 중 손가락 이동량)
+  const setStrip = (offsetPx: number, animate: boolean, pageIndex: number) => {
+    const el = stripRef.current
+    if (!el) return
+    el.style.transition = animate ? 'transform 0.3s ease' : 'none'
+    el.style.transform = `translateX(calc(-${pageIndex * 100}% + ${offsetPx}px))`
+  }
+
+  // 페이지가 바뀌면 (스와이프/화살표 어느 쪽이든) 해당 페이지로 스냅
   useEffect(() => {
-    getAllTracks().then(setTracks)
-  }, [])
+    setStrip(0, true, page)
+  }, [page])
+
+  const handleSwipeStart = (e: React.PointerEvent) => {
+    swipeRef.current = { x: e.clientX, y: e.clientY, t: e.timeStamp, active: false }
+  }
+
+  const handleSwipeMove = (e: React.PointerEvent) => {
+    const s = swipeRef.current
+    if (!s) return
+    const dx = e.clientX - s.x
+    const dy = e.clientY - s.y
+
+    // 아직 방향 미확정: 가로가 뚜렷해지면 스와이프 시작, 세로가 크면 포기(스크롤에 양보)
+    if (!s.active) {
+      if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+        s.active = true
+        // 스와이프 확정 후에만 포인터 캡처 (버튼 탭을 방해하지 않기 위해)
+        e.currentTarget.setPointerCapture(e.pointerId)
+      } else if (Math.abs(dy) > 16) {
+        swipeRef.current = null
+        return
+      } else {
+        return
+      }
+    }
+
+    // 끝 페이지에서 바깥으로 당기면 고무줄 저항
+    const atEdge = (page === 0 && dx > 0) || (page === PAGE_COUNT - 1 && dx < 0)
+    setStrip(atEdge ? dx * 0.35 : dx, false, page)
+  }
+
+  const handleSwipeEnd = (e: React.PointerEvent) => {
+    const s = swipeRef.current
+    swipeRef.current = null
+    if (!s || !s.active) return
+
+    const dx = e.clientX - s.x
+    const dt = e.timeStamp - s.t
+    const width = e.currentTarget.clientWidth
+
+    // 전환 판정: 화면의 1/4 이상 끌었거나, 짧고 빠른 플릭이거나
+    const far = Math.abs(dx) > width * 0.25
+    const flick = Math.abs(dx) > 40 && Math.abs(dx) / dt > 0.45
+    const next =
+      far || flick
+        ? Math.max(0, Math.min(PAGE_COUNT - 1, page + (dx < 0 ? 1 : -1)))
+        : page
+
+    if (next !== page) {
+      setPage(next) // useEffect가 새 페이지로 스냅
+    } else {
+      setStrip(0, true, page) // 원래 자리로 되돌아가는 스냅
+    }
+  }
+
+  const handleSwipeCancel = () => {
+    if (swipeRef.current?.active) {
+      setStrip(0, true, page)
+    }
+    swipeRef.current = null
+  }
+
+  // 현재 곡이 바뀔 때마다 "마지막 곡"으로 기억
+  useEffect(() => {
+    if (currentId !== null) {
+      localStorage.setItem(LAST_TRACK_KEY, String(currentId))
+    }
+  }, [currentId])
 
   // 곡별 설정 자동 저장: 설정이 바뀌면 300ms 뒤 저장 (연속 변경은 마지막 것만)
   useEffect(() => {
     if (currentId === null) return
     const timer = setTimeout(() => {
-      updateSettings(currentId, { tempo, loopA, loopB, posMarkers, trackS, trackE })
+      updateSettings(currentId, { tempo, pitch, loops, posMarkers, trackS, trackE })
     }, 300)
     return () => clearTimeout(timer) // 300ms 안에 또 바뀌면 이전 예약 취소 (디바운스)
-  }, [currentId, tempo, loopA, loopB, posMarkers, trackS, trackE])
+  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE])
 
   // 곡이 끝까지 재생되면 엔진이 알려줌 → 화면 상태 되돌리기
   useEffect(() => {
@@ -101,11 +213,12 @@ function App() {
       setDuration(dur)
       setPosition(0)
       // 곡 단위 설정 초기화 (엔진 쪽 루프/S/E는 load()가 정리함)
-      setLoopA(null)
-      setLoopB(null)
+      setLoops([])
       setPosMarkers([])
       setTrackS(null)
       setTrackE(null)
+      setPitch(0)
+      player.pitchSemitones = 0
 
       // 라이브러리에 저장 (동영상은 추출된 오디오만 저장 — 용량 절약 + 다음부턴 추출 생략)
       const meta = await addTrack(file.name, source, dur)
@@ -144,36 +257,77 @@ function App() {
     setPosition(pos)
   }
 
-  // 템포 슬라이더 → 엔진에 실시간 반영 (음정은 유지됨)
-  const handleTempoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const percent = Number(e.target.value)
-    setTempo(percent)
-    player.tempo = percent / 100
+  // 템포 휠 → 엔진에 실시간 반영 (음정은 유지됨)
+  const handleTempoChange = (percent: number) => {
+    const rounded = Math.round(percent)
+    setTempo(rounded)
+    player.tempo = rounded / 100
   }
 
-  // A 지점: 현재 재생 위치를 루프 시작으로
-  const handleLoopA = () => {
-    const a = player.position
-    setLoopA(a)
-    // B가 A보다 앞이면 무효화 (구간이 성립 안 됨)
-    const b = loopB !== null && loopB > a ? loopB : null
-    setLoopB(b)
-    player.setLoop(a, b)
+  // 마스터 볼륨 (Volume 가젯)
+  const handleVolumeChange = (v: number) => {
+    setVolume(v)
+    player.volume = v / 100
   }
 
-  // B 지점: 현재 재생 위치를 루프 끝으로 (A보다 뒤여야 함)
-  const handleLoopB = () => {
-    const b = player.position
-    if (loopA === null || b <= loopA) return
-    setLoopB(b)
-    player.setLoop(loopA, b)
+  // 피치 스테퍼 (Pitch 가젯 — 재생 중 실시간 반영)
+  const handlePitchChange = (semitones: number) => {
+    setPitch(semitones)
+    player.pitchSemitones = semitones
   }
 
-  // 루프 해제
-  const handleLoopClear = () => {
-    setLoopA(null)
-    setLoopB(null)
-    player.setLoop(null, null)
+  // 루프 상태 변경: 화면 state와 엔진을 항상 함께 갱신
+  const syncLoops = (next: Loop[]) => {
+    setLoops(next)
+    player.setLoops(next)
+  }
+
+  // Loop start: 현재 위치에 새 루프 시작점 추가 (여러 개 가능, 단독으로도 존재)
+  const handleLoopStart = () => {
+    syncLoops([...loops, { start: player.position, end: null }])
+  }
+
+  // Loop stop: 현재 위치보다 앞에 시작점이 있는 미완성 루프 중
+  // 가장 가까운 것에 끝점을 부여 (구간 완성 → 반복 활성)
+  const handleLoopStop = () => {
+    const pos = player.position
+    let targetIdx = -1
+    let bestStart = -Infinity
+    loops.forEach((loop, i) => {
+      if (loop.end === null && loop.start < pos && loop.start > bestStart) {
+        bestStart = loop.start
+        targetIdx = i
+      }
+    })
+    if (targetIdx < 0) return // 앞쪽에 열린 시작점이 없으면 무시
+    syncLoops(loops.map((loop, i) => (i === targetIdx ? { ...loop, end: pos } : loop)))
+  }
+
+  // 루프 시작 핀 홀드 → 시작점만 삭제 (사용자 요청: 누른 핀만 지워져야 함)
+  // 끝점이 있으면 끝점이 미완성 시작 핀으로 남음 (모델상 끝점 단독은 불가)
+  const handleDeleteLoop = (index: number) => {
+    syncLoops(
+      loops.flatMap((loop, i) => {
+        if (i !== index) return [loop]
+        // 끝점 없는 미완성 루프면 통째로 제거, 있으면 끝점을 새 시작점으로 전환
+        return loop.end === null ? [] : [{ start: loop.end, end: null }]
+      }),
+    )
+  }
+
+  // 루프 끝 핀 홀드 → 끝점만 삭제 (시작점만 남아 미완성 루프로)
+  const handleDeleteLoopEnd = (index: number) => {
+    syncLoops(loops.map((loop, i) => (i === index ? { ...loop, end: null } : loop)))
+  }
+
+  // 루프 시작 핀 탭 → 그 지점부터 재생 (원본 확정 동작)
+  const handleLoopStartTap = (pos: number) => {
+    player.seek(pos)
+    setPosition(pos)
+    if (!isPlaying) {
+      player.play()
+      setIsPlaying(player.isPlaying)
+    }
   }
 
   // 위치 마커 추가: 현재 재생 위치를 목록에 저장
@@ -186,6 +340,22 @@ function App() {
   const handleMarkerTap = (pos: number) => {
     player.seek(pos)
     setPosition(pos)
+  }
+
+  // 위치 마커 홀드 삭제
+  const handleDeleteMarker = (index: number) => {
+    setPosMarkers(posMarkers.filter((_, i) => i !== index))
+  }
+
+  // S/E 마커 홀드 삭제
+  const handleDeleteTrackS = () => {
+    setTrackS(null)
+    player.setTrackMarkers(null, trackE)
+  }
+
+  const handleDeleteTrackE = () => {
+    setTrackE(null)
+    player.setTrackMarkers(trackS, null)
   }
 
   // S 마커: 현재 위치를 재생 시작 지점으로 (E보다 앞이어야 함)
@@ -204,9 +374,8 @@ function App() {
     player.setTrackMarkers(trackS, end)
   }
 
-  // 목록에서 곡 선택 → 로드 + 저장된 설정 복원 + 재생 (설계서: 행 탭 = 로드+재생)
-  const handleSelectTrack = async (meta: TrackMeta) => {
-    player.ensureContext() // 제스처 컨텍스트가 살아있을 때(await 이전) 오디오 준비
+  // 곡 로드 + 저장된 설정 복원 (autoPlay: 목록 탭 = 재생 / 앱 시작 복원 = 로드만)
+  const loadTrack = async (meta: TrackMeta, autoPlay: boolean) => {
     setIsPlaying(false)
     setIsLoading(true)
     setLoadingText('불러오는 중...')
@@ -224,22 +393,38 @@ function App() {
       const s = ((await getTrack(meta.id)) ?? meta).settings
       setTempo(s.tempo)
       player.tempo = s.tempo / 100
-      setLoopA(s.loopA)
-      setLoopB(s.loopB)
-      player.setLoop(s.loopA, s.loopB)
+      setPitch(s.pitch ?? 0) // 구버전 저장 데이터엔 pitch가 없을 수 있음
+      player.pitchSemitones = s.pitch ?? 0
+
+      // 루프 복원 (구버전 loopA/loopB 단일 루프 데이터는 배열로 변환)
+      const legacy = s as typeof s & { loopA?: number | null; loopB?: number | null }
+      const restoredLoops: Loop[] =
+        s.loops ??
+        (legacy.loopA != null ? [{ start: legacy.loopA, end: legacy.loopB ?? null }] : [])
+      setLoops(restoredLoops)
+      player.setLoops(restoredLoops)
+
       setPosMarkers(s.posMarkers)
       setTrackS(s.trackS)
       setTrackE(s.trackE)
       player.setTrackMarkers(s.trackS, s.trackE)
 
-      player.play()
-      setIsPlaying(player.isPlaying)
+      if (autoPlay) {
+        player.play()
+        setIsPlaying(player.isPlaying)
+      }
     } catch (err) {
       console.error('곡 불러오기 실패:', err)
       alert('곡을 불러오지 못했어요.')
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // 목록에서 곡 선택 → 로드만 (사용자 결정: 자동 재생 없이 ▶ 눌러서 시작)
+  const handleSelectTrack = (meta: TrackMeta) => {
+    player.ensureContext() // 제스처 컨텍스트가 살아있을 때(await 이전) 오디오 준비
+    loadTrack(meta, false)
   }
 
   // 곡 삭제 ⭐ (원본의 방치된 버그 — 우리는 확실하게)
@@ -253,130 +438,161 @@ function App() {
     }
   }
 
-  // 모든 마커 일괄 삭제 (위치 마커 + S/E + A/B 루프)
+  // 모든 마커 일괄 삭제 (위치 마커 + S/E + 루프 전부)
   const handleClearAllMarkers = () => {
     setPosMarkers([])
     setTrackS(null)
     setTrackE(null)
     player.setTrackMarkers(null, null)
-    handleLoopClear()
+    syncLoops([])
   }
 
+  // 앱 시작: 곡 목록 로드 + 마지막 재생 곡 자동 복원 (재생은 안 함 — iOS 제스처 정책)
+  useEffect(() => {
+    ;(async () => {
+      const all = await getAllTracks()
+      setTracks(all)
+      const saved = localStorage.getItem(LAST_TRACK_KEY)
+      if (saved === null) return
+      const meta = all.find((t) => t.id === Number(saved))
+      if (meta) {
+        await loadTrack(meta, false) // 로드만 — ▶ 누르면 바로 이어서 연습
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 최초 1회만 실행
+  }, [])
+
+  const hasTrack = fileName !== null && !isLoading
+
   return (
-    <div className="app">
-      <h1>RiffSlow</h1>
-
-      <label className="file-button">
-        곡 선택
-        {/* 동영상도 허용: 오디오 트랙만 추출해서 재생 (decodeAudioData가 알아서 처리) */}
-        <input
-          type="file"
-          accept="audio/*,video/*,.mp3,.m4a,.wav,.mp4,.mov"
-          onChange={handleFileChange}
-          hidden
-        />
-      </label>
-
-      {isLoading && <p className="status">{loadingText}</p>}
-      {fileName && !isLoading && <p className="status">{fileName}</p>}
-
-      {/* 진행 휠: 위치/길이를 내려주고, 회전하면 onSeek로 돌려받음 */}
-      <Wheel
-        position={position}
-        duration={duration}
-        onSeek={handleSeek}
-        loopStart={loopA}
-        loopEnd={loopB}
-        markers={posMarkers}
-        onMarkerTap={handleMarkerTap}
-        trackStart={trackS}
-        trackEnd={trackE}
+    <div className="app-frame">
+      {/* COM-01 공통 상단 바 */}
+      <TopBar
+        tempo={tempo}
+        title={fileName}
+        isLoading={isLoading}
+        loadingText={loadingText}
+        onFileChange={handleFileChange}
       />
 
-      {/* A/B 구간 루프 (임시 버튼 — 추후 Markers 가젯으로 이동 예정) */}
-      <div className="loop-buttons">
-        <button onClick={handleLoopA} disabled={!fileName}>
-          A 지점
-        </button>
-        <button onClick={handleLoopB} disabled={!fileName || loopA === null}>
-          B 지점
-        </button>
-        <button
-          onClick={handleLoopClear}
-          disabled={loopA === null && loopB === null}
-        >
-          해제
-        </button>
-        <button onClick={handleAddMarker} disabled={!fileName}>
-          ○ 마커
-        </button>
-      </div>
-
-      {/* S/E 마커 + 트랙 루프 (임시 버튼 — 추후 Markers 가젯/P-02로 이동 예정) */}
-      <div className="loop-buttons">
-        <button onClick={handleTrackS} disabled={!fileName}>
-          S 마커
-        </button>
-        <button onClick={handleTrackE} disabled={!fileName}>
-          E 마커
-        </button>
-        <button
-          onClick={handleClearAllMarkers}
-          disabled={
-            posMarkers.length === 0 &&
-            trackS === null &&
-            trackE === null &&
-            loopA === null
-          }
-        >
-          전체삭제
-        </button>
-      </div>
-
-      {/* 템포 조절 (임시 슬라이더 — 추후 P-02 템포 휠로 교체 예정) */}
-      <div className="tempo-control">
-        <span className="tempo-value">{tempo}%</span>
-        <input
-          type="range"
-          min={20}
-          max={250}
-          value={tempo}
-          onChange={handleTempoChange}
-        />
-      </div>
-
-      <button
-        className="play-button"
-        onClick={togglePlay}
-        disabled={!fileName || isLoading}
+      {/* 페이지 스와이프 영역 (손가락 추적) */}
+      <div
+        className="pages-viewport"
+        onPointerDown={handleSwipeStart}
+        onPointerMove={handleSwipeMove}
+        onPointerUp={handleSwipeEnd}
+        onPointerCancel={handleSwipeCancel}
       >
-        {isPlaying ? '⏸ 일시정지' : '▶ 재생'}
-      </button>
+        <div className="pages-strip" ref={stripRef}>
+          <section className="page">
+            <ProgressPage
+              position={position}
+              duration={duration}
+              hasTrack={hasTrack}
+              isPlaying={isPlaying}
+              loops={loops}
+              posMarkers={posMarkers}
+              trackS={trackS}
+              trackE={trackE}
+              onSeek={handleSeek}
+              onMarkerTap={handleMarkerTap}
+              onLoopStartTap={handleLoopStartTap}
+              onDeleteMarker={handleDeleteMarker}
+              onDeleteLoop={handleDeleteLoop}
+              onDeleteLoopEnd={handleDeleteLoopEnd}
+              onDeleteTrackS={handleDeleteTrackS}
+              onDeleteTrackE={handleDeleteTrackE}
+              onTogglePlay={togglePlay}
+            />
+          </section>
 
-      {/* 곡 목록 (임시 UI — 추후 P-03 트랙 리스트 페이지로 이동) */}
-      {tracks.length > 0 && (
-        <div className="track-list">
-          {tracks.map((t) => (
-            <div
-              key={t.id}
-              className={`track-row${t.id === currentId ? ' current' : ''}`}
-              onClick={() => handleSelectTrack(t)}
-            >
-              {/* 현재 트랙 인디케이터 (설계서: 재생 중 곡 좌측 ▶) */}
-              <span className="track-indicator">
-                {t.id === currentId ? '▶' : ''}
-              </span>
-              <span className="track-name">{t.name}</span>
-              <span className="track-duration">{formatTime(t.duration)}</span>
-              <button
-                className="track-delete"
-                onClick={(e) => handleDeleteTrack(e, t)}
-              >
-                삭제
+          <section className="page">
+            <TempoPage
+              tempo={tempo}
+              hasTrack={hasTrack}
+              isPlaying={isPlaying}
+              onTempoChange={handleTempoChange}
+              onTogglePlay={togglePlay}
+            />
+          </section>
+        </div>
+
+        {/* 페이지 이동 화살표 (끝 페이지에서 해당 방향 숨김 — 설계서 확정) */}
+        {page > 0 && (
+          <button className="page-arrow left" onClick={() => setPage(page - 1)}>
+            ‹
+          </button>
+        )}
+        {page < PAGE_COUNT - 1 && (
+          <button className="page-arrow right" onClick={() => setPage(page + 1)}>
+            ›
+          </button>
+        )}
+      </div>
+
+      {/* 페이지 인디케이터 ● ○ ○ */}
+      <div className="page-indicator">
+        {Array.from({ length: PAGE_COUNT }, (_, i) => (
+          <span key={i} className={i === page ? 'dot on' : 'dot'} />
+        ))}
+      </div>
+
+      {/* 가젯 탭 바 + 선택된 가젯 패널 (모든 페이지 공통 — COM-01) */}
+      <GadgetBar
+        active={activeGadget}
+        playlistOpen={showPlaylist}
+        onSelect={handleGadgetSelect}
+      />
+      <div className="gadget-panel">
+        {activeGadget === 'volume' && (
+          <VolumeGadget volume={volume} onChange={handleVolumeChange} />
+        )}
+        {activeGadget === 'markers' && (
+          <MarkersGadget
+            hasTrack={hasTrack}
+            canLoopStop={loops.some((loop) => loop.end === null)}
+            canClearAll={
+              posMarkers.length > 0 ||
+              trackS !== null ||
+              trackE !== null ||
+              loops.length > 0
+            }
+            onAddMarker={handleAddMarker}
+            onLoopStart={handleLoopStart}
+            onLoopStop={handleLoopStop}
+            onTrackS={handleTrackS}
+            onTrackE={handleTrackE}
+            onClearAll={handleClearAllMarkers}
+          />
+        )}
+        {activeGadget === 'pitch' && (
+          <PitchGadget pitch={pitch} onChange={handlePitchChange} />
+        )}
+      </div>
+
+      {/* 곡 목록 시트: 화면 위로 슬라이드 업 되는 레이어 */}
+      {showPlaylist && (
+        <>
+          {/* 딤 배경 — 탭하면 닫힘 */}
+          <div className="sheet-backdrop" onClick={() => setShowPlaylist(false)} />
+          <div className="playlist-sheet">
+            <div className="sheet-header">
+              <span className="sheet-title">Playlist</span>
+              <button className="sheet-close" onClick={() => setShowPlaylist(false)}>
+                ✕
               </button>
             </div>
-          ))}
-        </div>
+            <TrackListPage
+              tracks={tracks}
+              currentId={currentId}
+              onSelect={(meta) => {
+                handleSelectTrack(meta) // 곡 선택 → 재생 시작
+                setShowPlaylist(false) // 시트 자동 닫힘
+              }}
+              onDelete={handleDeleteTrack}
+            />
+          </div>
+        </>
       )}
     </div>
   )

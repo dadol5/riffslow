@@ -45,14 +45,16 @@ function createSilentWavUrl(): string {
 
 export class Player {
   private ctx: AudioContext | null = null
+  private gain: GainNode | null = null // 마스터 볼륨 (shifter → gain → 스피커)
   private buffer: AudioBuffer | null = null
   private shifter: PitchShifter | null = null
   private playing = false
   private _tempo = 1 // 현재 템포 배율 (라이브러리가 읽기를 지원 안 해서 직접 보관)
+  private _volume = 1 // 마스터 볼륨 (0~1)
+  private _pitch = 0 // 피치 (반음 단위, ±12)
 
-  // A/B 구간 루프 (둘 다 설정되면 활성)
-  private loopStart: number | null = null
-  private loopEnd: number | null = null
+  // 구간 루프 목록 (여러 개 가능, end=null은 시작점만 있는 미완성 루프 — 재생엔 영향 없음)
+  private loops: { start: number; end: number | null }[] = []
 
   // 시작(S)/끝(E) 마커: 재생 범위 재정의 (null = 곡 처음/끝 그대로)
   private trackStart: number | null = null
@@ -107,6 +109,12 @@ export class Player {
     if (!this.ctx) {
       this.ctx = new AudioContext()
     }
+    if (!this.gain) {
+      // 마스터 볼륨 노드: 모든 소리가 여기를 거쳐 스피커로 나감
+      this.gain = this.ctx.createGain()
+      this.gain.gain.value = this._volume
+      this.gain.connect(this.ctx.destination)
+    }
     if (this.ctx.state === 'suspended') {
       this.ctx.resume()
     }
@@ -122,8 +130,8 @@ export class Player {
     if (!ctx) throw new Error('오디오 컨텍스트 생성 실패')
 
     this.stop() // 이전 곡 정리
-    this.setLoop(null, null) // 이전 곡의 루프 구간 초기화 (곡 단위 설정)
-    this.setTrackMarkers(null, null) // S/E 마커도 곡 단위라 초기화 (트랙 루프 토글은 유지)
+    this.loops = [] // 이전 곡의 루프 초기화 (곡 단위 설정)
+    this.setTrackMarkers(null, null) // S/E 마커도 곡 단위라 초기화
 
     const arrayBuffer = await file.arrayBuffer()
     this.buffer = await ctx.decodeAudioData(arrayBuffer)
@@ -136,6 +144,7 @@ export class Player {
       () => this.handleEnd(),
     )
     this.shifter.tempo = this._tempo // 직전 템포 설정 유지
+    this.shifter.pitchSemitones = this._pitch // 직전 피치 설정 유지
 
     // 오디오 처리 콜백마다 루프 조건 검사 (화면 상태와 무관하게 엔진이 책임)
     this.shifter.on('play', () => this.checkLoop())
@@ -168,6 +177,30 @@ export class Player {
     }
   }
 
+  // 마스터 볼륨 (0~1)
+  get volume(): number {
+    return this._volume
+  }
+
+  set volume(value: number) {
+    this._volume = Math.max(0, Math.min(value, 1))
+    if (this.gain) {
+      this.gain.gain.value = this._volume
+    }
+  }
+
+  // 피치 (반음 단위, ±12 — 템포와 독립, 재생 중 실시간 반영)
+  get pitchSemitones(): number {
+    return this._pitch
+  }
+
+  set pitchSemitones(value: number) {
+    this._pitch = Math.max(-12, Math.min(value, 12))
+    if (this.shifter) {
+      this.shifter.pitchSemitones = this._pitch
+    }
+  }
+
   play(): void {
     if (!this.ctx || !this.shifter || this.playing) return
     this.ensureContext() // 컨텍스트 깨우기 + 무음 모드 해제 재시도
@@ -178,8 +211,8 @@ export class Player {
       this.seek(start)
     }
 
-    // 연결하는 순간부터 소리가 흐름
-    this.shifter.connect(this.ctx.destination)
+    // 연결하는 순간부터 소리가 흐름 (shifter → 마스터 볼륨 → 스피커)
+    this.shifter.connect(this.gain ?? this.ctx.destination)
     this.playing = true
   }
 
@@ -197,10 +230,9 @@ export class Player {
     this.shifter.percentagePlayed = clamped / this.duration
   }
 
-  // A/B 루프 설정 (null 전달 시 해제)
-  setLoop(start: number | null, end: number | null): void {
-    this.loopStart = start
-    this.loopEnd = end
+  // 구간 루프 목록 교체 (화면의 루프 상태와 동기화)
+  setLoops(loops: { start: number; end: number | null }[]): void {
+    this.loops = loops
   }
 
   // S/E 마커 설정: 재생 시작/끝 지점 재정의 (null = 해제)
@@ -214,20 +246,37 @@ export class Player {
     return this.trackStart ?? 0
   }
 
+  // 루프 끝점 통과 판정 여유 (오디오 콜백 간격보다 넉넉하게)
+  // 이 범위를 벗어난 위치에서는 루프가 안 걸림 → 휠로 구간 밖 탐색 시 강제로 안 끌려옴
+  private static readonly LOOP_MARGIN = 0.35
+
   // 재생 위치 감시 (오디오 콜백마다 호출)
   private checkLoop(): void {
     if (!this.playing) return
+    const pos = this.position
 
-    // 1순위: A/B 구간 루프 — B를 넘으면 A로 복귀
-    if (this.loopStart !== null && this.loopEnd !== null) {
-      if (this.position >= this.loopEnd) {
-        this.seek(this.loopStart)
+    // 1순위: 구간 루프 — "끝점을 방금 지난" 루프만 시작점으로 복귀
+    // (구간 안에서 재생 중일 때만 반복되고, 밖으로 탐색해 나가면 자유)
+    let target: number | null = null
+    let bestEnd = -Infinity
+    for (const loop of this.loops) {
+      if (
+        loop.end !== null &&
+        pos >= loop.end &&
+        pos - loop.end <= Player.LOOP_MARGIN &&
+        loop.end > bestEnd
+      ) {
+        bestEnd = loop.end
+        target = loop.start
       }
+    }
+    if (target !== null) {
+      this.seek(target)
       return
     }
 
     // 2순위: E 마커 — 도달 시 S로 복귀(트랙 루프 on) 또는 정지
-    if (this.trackEnd !== null && this.position >= this.trackEnd) {
+    if (this.trackEnd !== null && pos >= this.trackEnd) {
       if (this.trackLoop) {
         this.seek(this.effectiveStart)
       } else {
@@ -240,10 +289,12 @@ export class Player {
 
   // 곡 자연 종료 처리 (곡 데이터를 끝까지 소모한 경우)
   private handleEnd(): void {
-    // A/B 루프가 걸려 있으면 (B가 곡 끝 근처인 경우) 정지하지 않고 A로 복귀
-    if (this.loopStart !== null && this.loopEnd !== null) {
-      this.seek(this.loopStart)
-      return
+    // 끝점이 곡 끝 근처인 루프가 있으면 정지하지 않고 시작점으로 복귀
+    for (const loop of this.loops) {
+      if (loop.end !== null && loop.end >= this.duration - 0.5) {
+        this.seek(loop.start)
+        return
+      }
     }
     // 트랙 루프: S로 복귀하며 계속 재생
     if (this.trackLoop) {

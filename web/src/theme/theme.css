@@ -1,0 +1,58 @@
+/* ── RiffSlow 테마 시스템 ──
+ *
+ * 규칙: 모든 컴포넌트는 색을 직접 쓰지 않고 여기 변수만 참조한다.
+ * 테마 전환: <html data-theme="amber"> 처럼 속성 하나만 바꾸면 전체 색이 교체됨.
+ *   → 추후 설정 화면(SET-01)에서 테마 선택 기능으로 연결 예정
+ */
+
+/* 기본 테마: 네온 블루 (쨍한 형광 파랑) */
+:root {
+  --bg: #08090c; /* 앱 배경 (푸른 기 도는 블랙) */
+  --surface: #14181f; /* 패널/행 배경 */
+  --line: #232a35; /* 경계선 */
+  --ring: #222933; /* 휠 링 본체 */
+
+  --neon: #00d9ff; /* 주 네온: 발광점/시간/강조 */
+  --neon-soft: #66e9ff; /* 밝은 발광: 루프 호 */
+  --neon-deep: #0091ff; /* 글로우 외곽/보조 */
+  --on-neon: #001018; /* 네온 배경 위 글자색 */
+
+  --text: #dfe6ec;
+  --text-dim: #4e5d6b; /* 라벨, 흐린 텍스트 */
+  --marker: #ffffff; /* 마커 글리프 */
+  --danger: #ff4d6a; /* 삭제 */
+
+  /* 네온 글로우 (drop-shadow 다중 적용) */
+  --glow-dot: drop-shadow(0 0 4px var(--neon)) drop-shadow(0 0 12px var(--neon-deep));
+  --glow-arc: drop-shadow(0 0 5px var(--neon-soft)) drop-shadow(0 0 12px var(--neon-deep));
+  --glow-text: drop-shadow(0 0 6px rgba(0, 217, 255, 0.55));
+  --glow-white: drop-shadow(0 0 3px rgba(255, 255, 255, 0.8));
+  /* 휠 링: 가는 선 + 겹겹의 넓은 발광 (원본: 모든 링이 기본적으로 넓은 후광을 두름) */
+  --glow-ring: drop-shadow(0 0 2px var(--neon)) drop-shadow(0 0 8px var(--neon))
+    drop-shadow(0 0 20px var(--neon-deep)) drop-shadow(0 0 42px var(--neon-deep));
+}
+
+/* 보존 테마: 원본 주황 (Tempo SlowMo 오리지널 무드) */
+[data-theme='amber'] {
+  --bg: #0e0c0a;
+  --surface: #1a1612;
+  --line: #332e28;
+  --ring: #2a2521;
+
+  --neon: #ff6a00;
+  --neon-soft: #ffa040;
+  --neon-deep: #ff3c00;
+  --on-neon: #180a00;
+
+  --text: #ece6df;
+  --text-dim: #7a6a5c;
+  --marker: #ffffff;
+  --danger: #cc5555;
+
+  --glow-dot: drop-shadow(0 0 4px var(--neon)) drop-shadow(0 0 10px var(--neon-deep));
+  --glow-arc: drop-shadow(0 0 5px var(--neon-soft)) drop-shadow(0 0 12px var(--neon-deep));
+  --glow-text: drop-shadow(0 0 6px rgba(255, 106, 0, 0.6));
+  --glow-white: drop-shadow(0 0 3px rgba(255, 255, 255, 0.8));
+  --glow-ring: drop-shadow(0 0 2px var(--neon)) drop-shadow(0 0 8px var(--neon))
+    drop-shadow(0 0 20px var(--neon-deep)) drop-shadow(0 0 42px var(--neon-deep));
+}

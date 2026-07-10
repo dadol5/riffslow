@@ -1,154 +1,626 @@
-/* 앱 전체 레이아웃: 세로 중앙 정렬 */
-.app {
-  min-height: 100vh;
+/* ── 앱 프레임: 상단 바 / 페이지 영역 / 인디케이터의 3단 구조 ── */
+.app-frame {
+  height: 100dvh; /* 모바일 주소창 변화에도 안정적인 뷰포트 높이 */
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── COM-01 상단 바 ── */
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(6px + env(safe-area-inset-top)) 14px 4px; /* 아이폰 노치 회피 */
+}
+
+/* 원형 네온 아이콘 버튼 (원본: 플로피/음표 버튼) */
+.icon-btn {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border: 2px solid var(--neon);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--neon);
+  cursor: pointer;
+  display: flex;
   align-items: center;
   justify-content: center;
-  gap: 20px;
-  padding: 24px;
-}
-
-h1 {
-  color: #ff6a00; /* 원본 앱의 주황 네온 느낌 (임시, 추후 테마 파일로 분리) */
-  font-size: 28px;
-}
-
-/* 파일 선택 버튼 (label을 버튼처럼 스타일링) */
-.file-button {
-  padding: 12px 24px;
-  border: 2px solid #ff6a00;
-  border-radius: 12px;
-  color: #ff6a00;
-  font-size: 16px;
-  cursor: pointer;
+  filter: var(--glow-text);
   user-select: none;
 }
 
-/* 선택된 파일명 / 상태 표시 */
-.status {
-  color: #aaa;
-  font-size: 14px;
-  max-width: 90%;
+.icon-btn:disabled {
+  cursor: default; /* 저장 버튼: 원본 모습 유지, 동작만 없음 (Phase 2+) */
+}
+
+.icon-btn .icon {
+  width: 24px;
+  height: 24px;
+}
+
+.top-center {
+  flex: 1;
+  text-align: center;
   overflow: hidden;
-  text-overflow: ellipsis; /* 긴 파일명은 ...으로 잘림 */
+}
+
+/* 템포 디스플레이: DSEG + 꺼진 세그먼트 잔상 */
+.dseg-display {
+  color: var(--neon);
+  font-family: 'DSEG7-Classic', monospace;
+  font-size: 24px;
+  filter: var(--glow-text);
+}
+
+.dseg-stack {
+  position: relative;
+  display: inline-block;
+}
+
+.dseg-ghost {
+  opacity: 0.14; /* 꺼진 세그먼트 잔상 (원본 계기판 디테일) */
+}
+
+.dseg-value {
+  position: absolute;
+  right: 0;
+  top: 0; /* 잔상 위에 우측 정렬로 겹침 (자릿수가 적어도 정렬 유지) */
+}
+
+.dseg-unit {
+  font-size: 13px;
+  margin-left: 4px;
+}
+
+/* 곡 제목: 도트 매트릭스 폰트(Galmuri) + 안 켜진 고스트 셀 띠 (원본 계기판 디테일) */
+.song-title {
+  position: relative;
+  color: var(--neon);
+  font-family: 'Galmuri11', monospace;
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-top: 4px;
+  overflow: hidden;
   white-space: nowrap;
 }
 
-/* ── 진행 휠 ── */
+/* 고스트 셀: 글자 뒤에 좌우 끝까지 깔리는 꺼진 셀 블록들 */
+.title-ghost {
+  position: absolute;
+  inset: 0;
+  opacity: 0.08;
+  letter-spacing: 4px; /* 셀 사이 틈 — 낱개 칸으로 보이게 (원본 계기판 느낌) */
+  overflow: hidden;
+}
+
+/* 실제 제목: 고스트 위에 겹침. 긴 제목 잘림 — 원본 확정 동작 */
+.title-text {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.9;
+  filter: var(--glow-text); /* 원본처럼 은은한 네온 글로우 */
+}
+
+/* ── 페이지 스와이프 영역 ── */
+.pages-viewport {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  touch-action: pan-y; /* 세로 스크롤은 브라우저에, 가로 스와이프는 우리가 판정 */
+}
+
+.pages-strip {
+  display: flex;
+  height: 100%;
+  transition: transform 0.3s ease; /* 페이지 전환 슬라이드 애니메이션 */
+}
+
+.page {
+  flex: 0 0 100%; /* 각 페이지 = 화면 폭 하나 (줄어들지 않음) */
+  overflow-y: auto;
+  overscroll-behavior: contain; /* 내부 스크롤이 끝나도 바깥(문서)으로 튕김 전파 안 함 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 10px;
+}
+
+/* 세로 배치: 원본처럼 휠을 위쪽에 붙임 (위 여백 1 : 아래 여백 4 비율) */
+.page::before {
+  content: '';
+  flex: 0.25 0 0;
+}
+
+.page::after {
+  content: '';
+  flex: 1 0 0;
+}
+
+/* 페이지 이동 화살표 (원본: 화면 위쪽에 배치) */
+.page-arrow {
+  position: absolute;
+  top: 10%;
+  background: none;
+  border: none;
+  color: var(--neon);
+  opacity: 0.85;
+  font-size: 32px;
+  padding: 6px 12px;
+  cursor: pointer;
+  filter: var(--glow-text);
+  z-index: 5;
+}
+
+.page-arrow.left {
+  left: 0;
+}
+
+.page-arrow.right {
+  right: 0;
+}
+
+/* 페이지 인디케이터 ● ○ ○ */
+.page-indicator {
+  display: flex;
+  justify-content: center;
+  gap: 9px;
+  padding: 6px 0 8px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.dot.on {
+  background: var(--neon);
+  box-shadow: 0 0 6px var(--neon);
+}
+
+/* P-03 빈 목록 안내 */
+.empty-note {
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+/* P-02 중앙 트랜스포트 (템포 휠 중앙의 작은 네온 원 + 재생 아이콘) */
+.transport {
+  cursor: pointer;
+}
+
+.transport.disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+
+.transport-icon {
+  fill: var(--neon);
+  filter: var(--glow-text);
+}
+
+/* ── 진행 휠 (P-01: 링 ≈ 화면 폭 74%, 원본 실측) ──
+   링이 SVG 박스의 83%를 차지하므로 박스 = 89vw일 때 링 = 74% */
 .wheel {
-  width: min(80vw, 340px);
+  width: min(89vw, 385px, 58dvh);
+  overflow: visible; /* 링 바깥 핀 글리프의 글로우가 잘리지 않게 */
   touch-action: none; /* 휠 드래그 중 브라우저 스크롤/당겨서 새로고침 차단 (필수!) */
   cursor: grab;
 }
 
-/* 재생 위치 발광점: 네온 글로우 (drop-shadow 다중 적용) */
-.glow-dot {
-  filter: drop-shadow(0 0 4px #ff6a00) drop-shadow(0 0 10px #ff3c00);
+/* 템포 휠 (P-02: 링 ≈ 화면 폭 83% — 원본은 P-01보다 큼, 실측 확정) */
+.wheel.wheel-tempo {
+  width: min(96vw, 420px, 60dvh);
 }
 
-/* 휠 중앙 시간 표시 (추후 DSEG 폰트로 교체) */
+/* 휠 링: 겹침 방식 발광 — 스타일은 NeonRing 컴포넌트가 직접 관리 (blur 미사용, iOS 호환) */
+
+/* 재생 위치/템포 하이라이트: 겹침 발광 — 스타일은 GripGlow 컴포넌트가 직접 관리 (blur 미사용) */
+
+/* 링 바깥 마커 핀 (원 + 꼬리 화살 — 원본 재현) */
+.pin {
+  color: var(--neon);
+  filter: var(--glow-text);
+}
+
+.pin.tappable {
+  cursor: pointer;
+}
+
+.pin circle,
+.pin path {
+  stroke: currentColor;
+}
+
+/* 터치 판정용 투명 원은 절대 그리지 않음 (한 겹 더 보이던 큰 동그라미 버그 수정) */
+.pin .pin-hit {
+  stroke: none;
+}
+
+.pin-symbol {
+  fill: currentColor;
+  font-size: 13px;
+  font-weight: bold;
+}
+
+/* 1초 홀드 삭제: 누르는 동안 점점 커지며 흐려짐 (Wheel.tsx의 HOLD_DELETE_MS와 싱크) */
+.pin-body {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.pin-body.holding {
+  animation: pin-hold-delete 1s linear forwards;
+}
+
+@keyframes pin-hold-delete {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0.05;
+  }
+}
+
+/* 루프 연결선: 시작 핀 → 끝 핀 (링 바깥, 원본 재현) */
+.loop-line {
+  stroke: var(--neon);
+  opacity: 0.85;
+  filter: var(--glow-text);
+}
+
+/* 휠 중앙 시간 표시 — DSEG 디지털 (라벨도 네온 계열, 원본 재현) */
 .time-label {
-  fill: #7a6a5c;
-  font-size: 12px;
+  fill: var(--neon);
+  opacity: 0.85;
+  font-size: 15px;
 }
 
 .time-value {
-  fill: #ff6a00;
-  font-size: 26px;
-  font-family: 'Courier New', monospace; /* DSEG 폰트 적용 전 임시 */
-  filter: drop-shadow(0 0 6px rgba(255, 106, 0, 0.6));
+  fill: var(--neon);
+  font-size: 27px;
+  font-family: 'DSEG7-Classic', monospace;
+  filter: var(--glow-text);
 }
 
-/* ── 템포 조절 (임시 슬라이더) ── */
-.tempo-control {
+.time-value.big {
+  font-size: 40px;
+}
+
+/* 꺼진 세그먼트 잔상 (88:88) */
+.time-ghost {
+  fill: var(--neon);
+  opacity: 0.12;
+  font-size: 27px;
+  font-family: 'DSEG7-Classic', monospace;
+}
+
+.time-ghost.big {
+  font-size: 40px;
+}
+
+/* ── 가젯 탭 바 (가로 스크롤, 높이 고정) ── */
+.gadget-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 12px;
+  flex-shrink: 0; /* 탭 바도 고정 영역 */
+  scrollbar-width: none; /* 스크롤바 숨김 (파이어폭스) */
+}
+
+.gadget-tabs::-webkit-scrollbar {
+  display: none; /* 스크롤바 숨김 (크롬/사파리) */
+}
+
+.gadget-tab {
+  padding: 9px 16px;
+  border: 1.5px solid var(--neon); /* 원본처럼 얇은 테두리 */
+  border-radius: 8px;
+  background: transparent;
+  color: var(--neon);
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.gadget-tab.active {
+  background: var(--neon); /* 선택 탭 = 채움 반전 (원본 확정) */
+  color: var(--on-neon);
+}
+
+.gadget-tab:disabled {
+  border-color: var(--line);
+  color: var(--text-dim);
+  cursor: default;
+}
+
+/* ── 가젯 패널 (선택된 가젯 표시 영역) ──
+   ⚠️ 높이 고정: 어떤 가젯을 선택해도, 페이지를 스와이프해도 하단 영역 크기 불변 (원본 확정) */
+.gadget-panel {
+  height: 132px;
+  flex-shrink: 0; /* 위 콘텐츠가 커져도 절대 줄어들지 않음 */
   display: flex;
   align-items: center;
-  gap: 14px;
-  width: min(80vw, 340px);
+  justify-content: center;
+  overflow: hidden; /* 내용이 넘쳐도 영역 밖으로 침범 금지 */
+  padding: 6px 16px calc(8px + env(safe-area-inset-bottom)); /* 아이폰 홈바 회피 */
 }
 
-.tempo-value {
-  color: #ff6a00;
-  font-family: 'Courier New', monospace;
-  font-size: 20px;
-  min-width: 64px; /* 자릿수가 바뀌어도 슬라이더가 안 밀리게 고정 폭 */
-  text-align: right;
+/* G-01 Volume: 빛나는 선 슬라이더 */
+.volume-gadget {
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
 }
 
-.tempo-control input[type='range'] {
-  flex: 1;
-  accent-color: #ff6a00; /* 슬라이더 색상을 테마 주황으로 */
+.volume-gadget input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--neon-deep), var(--neon));
+  box-shadow: 0 0 8px var(--neon-deep);
+  outline: none;
 }
 
-/* ── A/B 루프 버튼 (임시) ── */
-.loop-buttons {
+.volume-gadget input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff; /* 발광점 = 현재 값 (원본 재현) */
+  box-shadow: 0 0 8px #fff, 0 0 18px var(--neon);
+}
+
+.volume-label {
+  color: var(--neon);
+  opacity: 0.7;
+  font-size: 11px;
+  letter-spacing: 1px;
+  margin-top: 8px;
+}
+
+/* G-04 Markers: 원본 레이아웃 — 라벨 위 + 핀 글리프 아래, 한 줄 그룹 배치 */
+.markers-gadget {
   display: flex;
-  gap: 10px;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 18px;
 }
 
-.loop-buttons button {
-  padding: 10px 18px;
-  border: 2px solid #ffa040;
-  border-radius: 10px;
-  background: transparent;
-  color: #ffa040;
-  font-size: 15px;
-  cursor: pointer;
+.marker-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
 }
 
-.loop-buttons button:disabled {
-  border-color: #444;
-  color: #666;
-  cursor: default;
-}
-
-/* S/E 마커 글리프 */
-.se-glyph {
-  fill: #fff;
-  font-size: 14px;
-  font-weight: bold;
-  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.8));
-}
-
-/* 위치 마커 글리프 (흰색 발광) */
-.marker {
-  cursor: pointer;
-}
-
-.marker-glyph {
-  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.8));
-}
-
-/* 루프 구간 발광 호 */
-.glow-arc {
-  filter: drop-shadow(0 0 5px #ffa040) drop-shadow(0 0 12px #ff6a00);
+.group-lbl {
+  color: var(--neon);
   opacity: 0.9;
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: center;
+  max-width: 96px;
 }
 
-/* 재생/일시정지 버튼 */
-.play-button {
-  padding: 16px 44px;
+/* start/stop 보조 라벨 (원본 재현) */
+.group-sub {
+  color: var(--neon);
+  opacity: 0.7;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.group-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 52px;
+}
+
+.pin-btn {
+  background: none;
   border: none;
-  border-radius: 16px;
-  background: #ff6a00;
-  color: #000;
-  font-size: 20px;
+  padding: 2px;
+  color: var(--neon-soft);
+  cursor: pointer;
+  filter: var(--glow-text);
+}
+
+.pin-btn:disabled {
+  color: var(--text-dim);
+  filter: none;
+  cursor: default;
+}
+
+.pin-icon {
+  width: 34px;
+  height: 46px;
+}
+
+.pin-icon circle,
+.pin-icon path {
+  stroke: currentColor;
+}
+
+.pin-icon text {
+  fill: currentColor;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+/* 글자형 버튼 (✕ 전체 삭제) */
+.pin-btn.text {
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.pin-btn.text.delete {
+  font-size: 34px;
+}
+
+/* G-03 Pitch: [− | +] 붙은 알약 버튼 (원본 재현) */
+.pitch-gadget {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+}
+
+.pitch-pill {
+  display: flex;
+  border: 2px solid var(--neon);
+  border-radius: 14px;
+  filter: var(--glow-text);
+  overflow: hidden;
+}
+
+.pitch-pill button {
+  width: 68px;
+  padding: 10px 0;
+  background: none;
+  border: none;
+  color: var(--neon);
+  font-size: 24px;
   font-weight: bold;
   cursor: pointer;
 }
 
-/* 곡이 없을 때는 흐리게 (disabled 상태) */
-.play-button:disabled {
-  background: #444;
-  color: #888;
+.pitch-pill button:first-child {
+  border-right: 2px solid var(--neon); /* 가운데 구분선 */
+}
+
+.pitch-pill button:disabled {
+  color: var(--text-dim);
   cursor: default;
 }
 
-/* ── 곡 목록 (임시 — 추후 P-03 페이지로 이동) ── */
+.pitch-value {
+  min-width: 120px;
+  text-align: center;
+  color: var(--neon);
+  font-size: 16px;
+  filter: var(--glow-text);
+}
+
+/* P-01 재생/일시정지: 왼쪽 아래 테두리 없는 삼각형 (원본 재현) */
+.play-row {
+  width: min(92vw, 390px);
+  display: flex;
+  justify-content: flex-start;
+}
+
+.play-tri {
+  width: 54px;
+  height: 54px;
+  padding: 8px;
+  background: none;
+  border: none;
+  color: var(--neon);
+  cursor: pointer;
+  filter: var(--glow-text);
+}
+
+.play-tri svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+.play-tri:disabled {
+  color: var(--text-dim);
+  filter: none;
+  cursor: default;
+}
+
+/* ── 곡 목록 시트 (Playlist 탭 → 화면 위로 슬라이드 업 레이어) ── */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 20;
+  animation: fade-in 0.2s ease;
+}
+
+.playlist-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  max-height: 65dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.6);
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  animation: slide-up 0.25s ease;
+}
+
+.sheet-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 2px 8px;
+}
+
+.sheet-title {
+  color: var(--neon);
+  font-size: 14px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  filter: var(--glow-text);
+}
+
+.sheet-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 곡 목록 (시트 내부에서 스크롤) */
 .track-list {
-  width: min(90vw, 400px);
-  border-top: 1px solid #332e28;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--line);
 }
 
 .track-row {
@@ -156,23 +628,23 @@ h1 {
   align-items: center;
   gap: 10px;
   padding: 12px 8px;
-  border-bottom: 1px solid #332e28;
+  border-bottom: 1px solid var(--line);
   cursor: pointer;
 }
 
 .track-row.current .track-name {
-  color: #ff6a00; /* 현재 재생 곡 강조 */
+  color: var(--neon); /* 현재 재생 곡 강조 */
 }
 
 .track-indicator {
   width: 16px;
-  color: #ff6a00;
+  color: var(--neon);
   font-size: 12px;
 }
 
 .track-name {
   flex: 1;
-  color: #ddd;
+  color: var(--text);
   font-size: 15px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -180,17 +652,17 @@ h1 {
 }
 
 .track-duration {
-  color: #7a6a5c;
+  color: var(--text-dim);
   font-size: 13px;
-  font-family: 'Courier New', monospace;
+  font-family: 'DSEG7-Classic', monospace;
 }
 
 .track-delete {
   padding: 6px 12px;
-  border: 1px solid #883333;
+  border: 1px solid var(--danger);
   border-radius: 8px;
   background: transparent;
-  color: #cc5555;
+  color: var(--danger);
   font-size: 13px;
   cursor: pointer;
 }

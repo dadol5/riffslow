@@ -1,13 +1,35 @@
-/* 전역 초기화 + 다크 배경 (원본 앱 다크 테마 기반) */
+/* 한글 지원 도트 매트릭스 폰트 (곡 제목용) — galmuri 패키지에서 필요한 하나만 로드
+   (패키지 css 전체를 import하면 모든 패밀리 ~40MB가 빌드에 포함되므로 직접 선언) */
+@font-face {
+  font-family: 'Galmuri11';
+  src: url('../node_modules/galmuri/dist/Galmuri11.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* 전역 초기화 + 테마 변수 기반 다크 배경 */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
+html,
 body {
-  background: #0e0c0a; /* 기획문서의 다크 배경 색 */
-  color: #eee;
+  /* 문서 자체는 스크롤 없음 (앱은 고정 화면 + 내부 스크롤만 사용)
+     → 스크롤 끝에서 화면 전체가 튕기는 고무줄 바운스 차단 */
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
   font-family: system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* 길게 눌렀을 때 텍스트 선택/돋보기 방지 (앱처럼 동작) */
+  -webkit-user-select: none;
+  user-select: none;
 }
