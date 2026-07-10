@@ -1,0 +1,13 @@
+/* 전역 초기화 + 다크 배경 (원본 앱 다크 테마 기반) */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #0e0c0a; /* 기획문서의 다크 배경 색 */
+  color: #eee;
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

@@ -1,0 +1,196 @@
+/* 앱 전체 레이아웃: 세로 중앙 정렬 */
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 24px;
+}
+
+h1 {
+  color: #ff6a00; /* 원본 앱의 주황 네온 느낌 (임시, 추후 테마 파일로 분리) */
+  font-size: 28px;
+}
+
+/* 파일 선택 버튼 (label을 버튼처럼 스타일링) */
+.file-button {
+  padding: 12px 24px;
+  border: 2px solid #ff6a00;
+  border-radius: 12px;
+  color: #ff6a00;
+  font-size: 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 선택된 파일명 / 상태 표시 */
+.status {
+  color: #aaa;
+  font-size: 14px;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis; /* 긴 파일명은 ...으로 잘림 */
+  white-space: nowrap;
+}
+
+/* ── 진행 휠 ── */
+.wheel {
+  width: min(80vw, 340px);
+  touch-action: none; /* 휠 드래그 중 브라우저 스크롤/당겨서 새로고침 차단 (필수!) */
+  cursor: grab;
+}
+
+/* 재생 위치 발광점: 네온 글로우 (drop-shadow 다중 적용) */
+.glow-dot {
+  filter: drop-shadow(0 0 4px #ff6a00) drop-shadow(0 0 10px #ff3c00);
+}
+
+/* 휠 중앙 시간 표시 (추후 DSEG 폰트로 교체) */
+.time-label {
+  fill: #7a6a5c;
+  font-size: 12px;
+}
+
+.time-value {
+  fill: #ff6a00;
+  font-size: 26px;
+  font-family: 'Courier New', monospace; /* DSEG 폰트 적용 전 임시 */
+  filter: drop-shadow(0 0 6px rgba(255, 106, 0, 0.6));
+}
+
+/* ── 템포 조절 (임시 슬라이더) ── */
+.tempo-control {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(80vw, 340px);
+}
+
+.tempo-value {
+  color: #ff6a00;
+  font-family: 'Courier New', monospace;
+  font-size: 20px;
+  min-width: 64px; /* 자릿수가 바뀌어도 슬라이더가 안 밀리게 고정 폭 */
+  text-align: right;
+}
+
+.tempo-control input[type='range'] {
+  flex: 1;
+  accent-color: #ff6a00; /* 슬라이더 색상을 테마 주황으로 */
+}
+
+/* ── A/B 루프 버튼 (임시) ── */
+.loop-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.loop-buttons button {
+  padding: 10px 18px;
+  border: 2px solid #ffa040;
+  border-radius: 10px;
+  background: transparent;
+  color: #ffa040;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.loop-buttons button:disabled {
+  border-color: #444;
+  color: #666;
+  cursor: default;
+}
+
+/* S/E 마커 글리프 */
+.se-glyph {
+  fill: #fff;
+  font-size: 14px;
+  font-weight: bold;
+  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.8));
+}
+
+/* 위치 마커 글리프 (흰색 발광) */
+.marker {
+  cursor: pointer;
+}
+
+.marker-glyph {
+  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.8));
+}
+
+/* 루프 구간 발광 호 */
+.glow-arc {
+  filter: drop-shadow(0 0 5px #ffa040) drop-shadow(0 0 12px #ff6a00);
+  opacity: 0.9;
+}
+
+/* 재생/일시정지 버튼 */
+.play-button {
+  padding: 16px 44px;
+  border: none;
+  border-radius: 16px;
+  background: #ff6a00;
+  color: #000;
+  font-size: 20px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+/* 곡이 없을 때는 흐리게 (disabled 상태) */
+.play-button:disabled {
+  background: #444;
+  color: #888;
+  cursor: default;
+}
+
+/* ── 곡 목록 (임시 — 추후 P-03 페이지로 이동) ── */
+.track-list {
+  width: min(90vw, 400px);
+  border-top: 1px solid #332e28;
+}
+
+.track-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 8px;
+  border-bottom: 1px solid #332e28;
+  cursor: pointer;
+}
+
+.track-row.current .track-name {
+  color: #ff6a00; /* 현재 재생 곡 강조 */
+}
+
+.track-indicator {
+  width: 16px;
+  color: #ff6a00;
+  font-size: 12px;
+}
+
+.track-name {
+  flex: 1;
+  color: #ddd;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-duration {
+  color: #7a6a5c;
+  font-size: 13px;
+  font-family: 'Courier New', monospace;
+}
+
+.track-delete {
+  padding: 6px 12px;
+  border: 1px solid #883333;
+  border-radius: 8px;
+  background: transparent;
+  color: #cc5555;
+  font-size: 13px;
+  cursor: pointer;
+}
