@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
 // https://vite.dev/config/
 export default defineConfig(({ command }) => ({
@@ -8,6 +9,9 @@ export default defineConfig(({ command }) => ({
   base: command === 'build' ? '/riffslow/' : '/',
   plugins: [
     react(),
+    // dev 서버 HTTPS (자체 서명 인증서 자동 생성)
+    // — AudioWorklet은 보안 컨텍스트(https/localhost)에서만 동작해서, 폰 LAN 접속에 필수
+    basicSsl(),
     // PWA: 홈 화면 설치 + 오프라인 캐싱 (서비스 워커)
     VitePWA({
       registerType: 'autoUpdate', // 새 버전 배포 시 자동 갱신
