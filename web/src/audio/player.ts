@@ -48,6 +48,7 @@ export class Player {
   private gain: GainNode | null = null // 마스터 볼륨 (shifter → gain → 스피커)
   private buffer: AudioBuffer | null = null
   private shifter: PitchShifter | null = null
+  private shifterNeedsRebuild = false // suspended 컨텍스트에서 생성된 shifter 표시 (iOS 대응)
   private playing = false
   private _tempo = 1 // 현재 템포 배율 (라이브러리가 읽기를 지원 안 해서 직접 보관)
   private _volume = 1 // 마스터 볼륨 (0~1)
@@ -137,8 +138,21 @@ export class Player {
     this.buffer = await ctx.decodeAudioData(arrayBuffer)
 
     // 곡마다 새 shifter 생성 (buffer가 생성자에 묶이는 구조라 재사용 불가)
+    this.createShifter()
+
+    // ⚠️ iOS WebKit: suspended 컨텍스트에서 만든 ScriptProcessor는 나중에 resume해도
+    // 콜백이 영원히 안 돌아감 → 재생 시점(터치 안)에 재생성이 필요하다고 표시
+    // (앱 시작 시 마지막 곡 복원처럼 터치 밖에서 로드되는 경우가 여기 해당)
+    this.shifterNeedsRebuild = ctx.state !== 'running'
+
+    return this.buffer.duration
+  }
+
+  // shifter 생성 + 현재 템포/피치/루프 감시 연결 (load와 재생성이 공유)
+  private createShifter(): void {
+    if (!this.ctx || !this.buffer) return
     this.shifter = new PitchShifter(
-      ctx,
+      this.ctx,
       this.buffer,
       PROCESS_BUFFER_SIZE,
       () => this.handleEnd(),
@@ -148,8 +162,17 @@ export class Player {
 
     // 오디오 처리 콜백마다 루프 조건 검사 (화면 상태와 무관하게 엔진이 책임)
     this.shifter.on('play', () => this.checkLoop())
+  }
 
-    return this.buffer.duration
+  // suspended 상태에서 만들어졌던 shifter를 터치 컨텍스트 안에서 다시 생성 (위치 보존)
+  private rebuildShifter(): void {
+    if (!this.ctx || !this.buffer || !this.shifter) return
+    const pos = this.position // 현재 위치 보존 (복원 후 휠로 이동해뒀을 수 있음)
+    this.shifter.off()
+    this.shifter.disconnect()
+    this.createShifter()
+    this.seek(pos)
+    this.shifterNeedsRebuild = false
   }
 
   get duration(): number {
@@ -204,6 +227,11 @@ export class Player {
   play(): void {
     if (!this.ctx || !this.shifter || this.playing) return
     this.ensureContext() // 컨텍스트 깨우기 + 무음 모드 해제 재시도
+
+    // suspended 상태에서 만들어진 shifter는 콜백이 안 돌므로 터치 안에서 재생성 (iOS 대응)
+    if (this.shifterNeedsRebuild) {
+      this.rebuildShifter()
+    }
 
     // S 마커보다 앞이거나 E 마커 밖이면 S부터 시작 (재생 범위 재정의)
     const start = this.effectiveStart
