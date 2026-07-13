@@ -52,13 +52,9 @@ function App() {
   const [activeGadget, setActiveGadget] = useState<GadgetId>('volume') // 선택된 가젯 탭
   const [showPlaylist, setShowPlaylist] = useState(false) // 곡 목록 시트(레이어) 열림 여부
 
-  // 가젯 탭 선택: Playlist는 시트 토글, 나머지는 패널 전환
+  // 가젯 탭 선택 = 패널 전환 (Playlist는 상단 음표 메뉴로 이동 — 사용자 결정)
   const handleGadgetSelect = (id: GadgetId) => {
-    if (id === 'playlist') {
-      setShowPlaylist((open) => !open)
-    } else {
-      setActiveGadget(id)
-    }
+    setActiveGadget(id)
   }
   const [volume, setVolume] = useState(100) // 마스터 볼륨 % (전역 설정)
   const [pitch, setPitch] = useState(0) // 피치 반음 (곡별 저장)
@@ -473,6 +469,7 @@ function App() {
         isLoading={isLoading}
         loadingText={loadingText}
         onFileChange={handleFileChange}
+        onOpenPlaylist={() => setShowPlaylist(true)}
       />
 
       {/* 페이지 스와이프 영역 (손가락 추적) */}
@@ -538,11 +535,7 @@ function App() {
       </div>
 
       {/* 가젯 탭 바 + 선택된 가젯 패널 (모든 페이지 공통 — COM-01) */}
-      <GadgetBar
-        active={activeGadget}
-        playlistOpen={showPlaylist}
-        onSelect={handleGadgetSelect}
-      />
+      <GadgetBar active={activeGadget} onSelect={handleGadgetSelect} />
       <div className="gadget-panel">
         {activeGadget === 'volume' && (
           <VolumeGadget volume={volume} onChange={handleVolumeChange} />

@@ -46,6 +46,59 @@
   overflow: hidden;
 }
 
+/* 음표 버튼 방사형 메뉴 (원본 IMP-01 재현) — 음표 중심 부채꼴로 원형 버튼 전개 */
+.note-menu-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* 메뉴 열린 동안 화면 딤 (원본: 배경 전체가 어두워짐) + 밖 터치로 닫기 */
+.note-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.8); /* 원본처럼 확실하게 어둡게 (뒤 UI와 안 겹쳐 보이게) */
+}
+
+/* 메뉴 열린 동안 음표 버튼은 딤 위로 밝게 유지 (원본 재현) */
+.note-menu-wrap .icon-btn.import {
+  position: relative;
+  z-index: 41;
+}
+
+/* 부채꼴 버튼 공통: 음표 버튼 중심 기준 절대 배치 (버튼 46px = 중심 보정 23px) */
+.note-fan {
+  position: absolute;
+  z-index: 41;
+  background: var(--bg); /* 원 안으로 뒤 UI가 비치지 않게 불투명 배경 */
+  animation: fan-in 0.18s ease-out backwards;
+}
+
+/* 호 반지름 ≈ 105px — 원본 실측 비율 (음표 왼쪽~아래로 전개) */
+.note-fan.fan-1 {
+  /* 150° 방향 (왼쪽-아래 대각) */
+  left: calc(50% - 91px - 23px);
+  top: calc(50% + 53px - 23px);
+}
+
+.note-fan.fan-2 {
+  /* 105° 방향 (거의 아래) */
+  left: calc(50% - 27px - 23px);
+  top: calc(50% + 101px - 23px);
+  animation-delay: 0.05s; /* 순차 전개 느낌 */
+}
+
+@keyframes fan-in {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 /* 템포 디스플레이: DSEG + 꺼진 세그먼트 잔상 */
 .dseg-display {
   color: var(--neon);
@@ -210,15 +263,17 @@
 /* ── 진행 휠 (P-01: 링 ≈ 화면 폭 74%, 원본 실측) ──
    링이 SVG 박스의 83%를 차지하므로 박스 = 89vw일 때 링 = 74% */
 .wheel {
-  width: min(89vw, 385px, 58dvh);
+  width: min(85vw, 365px, 54dvh); /* 핀 축소로 세로 공간을 벌어 원은 다시 키움 (사용자 결정) */
+  margin-top: 16px; /* 위쪽 핀(S 마커 등)이 곡 제목과 겹치지 않게 휠을 살짝 내림 */
   overflow: visible; /* 링 바깥 핀 글리프의 글로우가 잘리지 않게 */
   touch-action: none; /* 휠 드래그 중 브라우저 스크롤/당겨서 새로고침 차단 (필수!) */
   cursor: grab;
 }
 
-/* 템포 휠 (P-02: 링 ≈ 화면 폭 83% — 원본은 P-01보다 큼, 실측 확정) */
+/* 템포 휠 (P-02: 링 ≈ 화면 폭 83% — 원본은 P-01보다 큼, 실측 확정. 핀이 없어 여백 불필요) */
 .wheel.wheel-tempo {
   width: min(96vw, 420px, 60dvh);
+  margin-top: 0;
 }
 
 /* 휠 링: 겹침 방식 발광 — 스타일은 NeonRing 컴포넌트가 직접 관리 (blur 미사용, iOS 호환) */
@@ -322,11 +377,9 @@
 /* ── 가젯 탭 바 (가로 스크롤, 높이 고정) ── */
 .gadget-tabs {
   display: flex;
-  gap: 8px;
-  overflow-x: auto;
+  justify-content: space-evenly; /* 탭 3개를 화면 폭에 고르게 분배 (원본 재현) */
   padding: 4px 12px;
   flex-shrink: 0; /* 탭 바도 고정 영역 */
-  scrollbar-width: none; /* 스크롤바 숨김 (파이어폭스) */
 }
 
 .gadget-tabs::-webkit-scrollbar {

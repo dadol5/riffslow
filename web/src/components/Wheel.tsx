@@ -5,6 +5,9 @@ import { SIZE, CENTER, TOUCH_BAND, polar } from './wheelGeo'
 // P-01 진행 휠 전용 링 반지름 — 원본 실측 비율(지름 = SVG 폭의 76%)로 축소
 // (P-02 템포 휠은 공용 RADIUS 150 유지 — 사용자 결정)
 const WHEEL_R = 137
+
+// 하이라이트(그립)를 잡았을 때만 회전 시작 (P-02와 동일 — 스와이프 충돌 방지, 사용자 결정)
+const GRIP_GRAB_SPREAD = 36 // 하이라이트 중심 기준 ±36° 안에서만 잡기 판정
 import GripGlow from './GripGlow'
 import NeonRing from './NeonRing'
 import type { Loop } from '../db/library'
@@ -42,7 +45,7 @@ function timeToAngle(time: number, duration: number): number {
 
 // 링 바깥에 붙는 핀 글리프 (원본 재현: 원 + 꼬리 화살 — 꼬리가 링 위 지점을 가리킴)
 // 인터랙션: 짧은 탭 = onTap / 1초 홀드 = 커지며 흐려지다 삭제 (도중에 떼면 취소)
-const PIN_OFFSET = 30 // 링에서 핀 앵커까지 거리 (링~꼬리 끝 공백 13px — 링 잡을 때 핀 오터치 방지)
+const PIN_OFFSET = 28 // 링에서 핀 앵커까지 거리 (링~꼬리 끝 공백 14px — 링 잡을 때 핀 오터치 방지)
 
 function Pin({
   angleDeg,
@@ -107,21 +110,21 @@ function Pin({
       {/* 홀드 삭제 애니메이션은 안쪽 그룹에 적용 (배치 transform과 분리) */}
       <g className={`pin-body${holding ? ' holding' : ''}`}>
         {/* 터치 판정 영역: 핀 원 중심에 정렬 — 링 쪽으로 침범하면 탐색 시 오터치되므로 금지 */}
-        <circle className="pin-hit" cy={-15} r={22} fill="transparent" />
-        {/* 원 (사용자 요청 크기 — 꼬리/심볼보다 살짝 작게) */}
-        <circle cy={-15} r={14} fill="none" strokeWidth={3.2} />
+        <circle className="pin-hit" cy={-13} r={20} fill="transparent" />
+        {/* 원 (살짝 축소 — 휠을 키우면서 세로 공간 확보, 사용자 결정) */}
+        <circle cy={-13} r={12} fill="none" strokeWidth={3} />
         {/* 꼬리 화살 (링 방향) */}
         <path
-          d="M -11 5 L 0 17 L 11 5"
+          d="M -9 4 L 0 14 L 9 4"
           fill="none"
-          strokeWidth={3.2}
+          strokeWidth={3}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
         {symbol && (
           // 화살표(›‹)만 크게, 글자(S/E)는 기본 크기 (사용자 요청 — 크기별 세로 정렬 보정)
           <text
-            y={symbol === '›' || symbol === '‹' ? -5 : -9}
+            y={symbol === '›' || symbol === '‹' ? -3 : -7}
             textAnchor="middle"
             className={`pin-symbol${symbol === '›' || symbol === '‹' ? ' arrow' : ''}`}
           >
@@ -133,8 +136,8 @@ function Pin({
   )
 }
 
-// 핀 원들이 놓이는 반경 (루프 연결선이 이 반경을 따라 그려짐 — 핀 원 중심 cy=-15와 싱크)
-const PIN_RING_R = WHEEL_R + PIN_OFFSET + 15
+// 핀 원들이 놓이는 반경 (루프 연결선이 이 반경을 따라 그려짐 — 핀 원 중심 cy=-13과 싱크)
+const PIN_RING_R = WHEEL_R + PIN_OFFSET + 13
 
 // 두 각도 사이를 임의 반경으로 잇는 호 (원본: 루프 핀끼리 링 바깥에서 선으로 연결됨)
 function arcBetweenAt(radius: number, startAngle: number, endAngle: number): string {
@@ -179,16 +182,23 @@ function Wheel({
   const handleDown = (e: React.PointerEvent<SVGSVGElement>) => {
     const { x, y } = toWheelCoords(e)
 
-    // 터치 시작점이 링 위일 때만 회전 판정 (설계서 확정 사항)
+    // 터치 시작점이 링 위일 때만 회전 후보 (설계서 확정 사항)
     // 링 밖/중앙 터치는 그대로 흘려보냄 → 부모(App)의 페이지 스와이프로 판정됨
     const dist = Math.sqrt(x * x + y * y)
     if (dist < WHEEL_R - TOUCH_BAND || dist > WHEEL_R + TOUCH_BAND) return
 
-    // 링을 잡았다 = 휠 제스처 우선 → 페이지 스와이프로 번지지 않게 차단 (설계서 확정)
+    // 하이라이트(그립) 근처를 잡았을 때만 회전 시작 (P-02와 동일 — 사용자 결정)
+    // → 링의 다른 부분에서 시작한 터치는 페이지 스와이프로 흘려보냄
+    const pointerAngle = (Math.atan2(y, x) * 180) / Math.PI
+    let diff = pointerAngle - progressAngle
+    diff = ((diff % 360) + 540) % 360 - 180 // -180~180 범위로 정규화
+    if (Math.abs(diff) > GRIP_GRAB_SPREAD) return
+
+    // 그립을 잡았다 = 휠 제스처 우선 → 페이지 스와이프로 번지지 않게 차단
     e.stopPropagation()
     e.currentTarget.setPointerCapture(e.pointerId)
     dragRef.current = {
-      lastAngle: (Math.atan2(y, x) * 180) / Math.PI,
+      lastAngle: pointerAngle,
       pos: position,
     }
     setGrabbing(true)

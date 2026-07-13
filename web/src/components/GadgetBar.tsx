@@ -1,38 +1,28 @@
-// 가젯 탭 바 — 모든 페이지 공통 하단 영역 (COM-01 ⑦, 가로 스크롤)
-// 미구현 가젯은 비활성 표시 (추후 SET-01에서 탭 on/off 관리 예정)
+// 가젯 탭 바 — 모든 페이지 공통 하단 영역 (COM-01 ⑦)
+// 사용자 결정: Volume/Markers/Pitch 3개만 노출 (Playlist는 상단 음표 메뉴로 이동,
+// 미구현 가젯 자리는 숨김 — 추후 SET-01에서 탭 on/off 관리 예정)
 
-export type GadgetId = 'volume' | 'markers' | 'pitch' | 'playlist'
+export type GadgetId = 'volume' | 'markers' | 'pitch'
 
-// 탭 정의: id가 null이면 아직 미구현 (자리만 재현)
-const TABS: { id: GadgetId | null; label: string }[] = [
+const TABS: { id: GadgetId; label: string }[] = [
   { id: 'volume', label: 'Volume' },
   { id: 'markers', label: 'Markers' },
   { id: 'pitch', label: 'Pitch' },
-  { id: 'playlist', label: 'Playlist' }, // 곡 목록 (P-03 페이지 대신 가젯으로)
-  { id: null, label: 'Equaliser' },
-  { id: null, label: 'Balance' },
-  { id: null, label: 'BPM' },
 ]
 
 interface GadgetBarProps {
   active: GadgetId
-  playlistOpen: boolean // Playlist는 패널이 아니라 시트(레이어) 토글이라 별도 상태
   onSelect: (gadget: GadgetId) => void
 }
 
-function GadgetBar({ active, playlistOpen, onSelect }: GadgetBarProps) {
-  // 탭 강조 여부: Playlist는 시트 열림 상태, 나머지는 선택된 가젯
-  const isActive = (id: GadgetId | null) =>
-    id === 'playlist' ? playlistOpen : id === active
-
+function GadgetBar({ active, onSelect }: GadgetBarProps) {
   return (
     <nav className="gadget-tabs">
       {TABS.map(({ id, label }) => (
         <button
           key={label}
-          className={`gadget-tab${isActive(id) ? ' active' : ''}`}
-          disabled={id === null}
-          onClick={() => id && onSelect(id)}
+          className={`gadget-tab${id === active ? ' active' : ''}`}
+          onClick={() => onSelect(id)}
         >
           {label}
         </button>
