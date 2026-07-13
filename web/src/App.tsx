@@ -8,6 +8,8 @@ import GadgetBar, { type GadgetId } from './components/GadgetBar'
 import VolumeGadget from './components/gadgets/VolumeGadget'
 import MarkersGadget from './components/gadgets/MarkersGadget'
 import PitchGadget from './components/gadgets/PitchGadget'
+import BpmGadget from './components/gadgets/BpmGadget'
+import { analyzeBpm } from './audio/bpm'
 import {
   addTrack,
   deleteTrack,
@@ -58,6 +60,37 @@ function App() {
   }
   const [volume, setVolume] = useState(100) // 마스터 볼륨 % (전역 설정)
   const [pitch, setPitch] = useState(0) // 피치 반음 (곡별 저장)
+
+  // ── BPM (곡별 저장): undefined = 미분석, null = 분석 실패 확정, number = 값 ──
+  const [bpm, setBpm] = useState<number | null | undefined>(undefined)
+  const [bpmOffset, setBpmOffset] = useState<number | null>(null) // 첫 박 위치 (메트로놈용)
+  const [bpmAnalyzing, setBpmAnalyzing] = useState(false)
+  const [metroOn, setMetroOn] = useState(false) // 메트로놈 on/off (세션 한정 — 저장 안 함)
+  const [metroVolume, setMetroVolume] = useState(100) // 메트로놈 볼륨 % (음원과 개별)
+
+  // BPM 그리드가 바뀔 때마다 엔진에 반영 (곡 교체/분석 완료/×2·÷2 교정 모두 포함)
+  useEffect(() => {
+    player.setBpmGrid(bpm ?? null, bpmOffset)
+  }, [player, bpm, bpmOffset])
+
+  // 분석 완료 시점에 다른 곡으로 바뀌었는지 판별하기 위한 현재 곡 id 미러
+  const currentIdRef = useRef<number | null>(null)
+  useEffect(() => {
+    currentIdRef.current = currentId
+  }, [currentId])
+
+  // BPM 자동 분석 (로드 완료 후 백그라운드 실행 — 재생/UI를 막지 않음)
+  const runBpmAnalysis = async (trackId: number) => {
+    const buffer = player.audioBuffer
+    if (!buffer) return
+    setBpmAnalyzing(true)
+    const result = await analyzeBpm(buffer)
+    // 분석 도중 다른 곡으로 바뀌었으면 결과 폐기 (그 곡의 로드 흐름이 상태를 관리)
+    if (currentIdRef.current !== trackId) return
+    setBpmAnalyzing(false)
+    setBpm(result?.bpm ?? null) // 실패는 null 저장 → 다음 로드 때 재분석됨
+    setBpmOffset(result?.offset ?? null)
+  }
 
   // ── 페이지 스와이프: 손가락을 따라 실시간으로 끌리고, 놓으면 스냅 ──
   // (휠 링에서 시작한 터치는 Wheel이 stopPropagation으로 차단 → 여기 안 옴)
@@ -154,10 +187,19 @@ function App() {
   useEffect(() => {
     if (currentId === null) return
     const timer = setTimeout(() => {
-      updateSettings(currentId, { tempo, pitch, loops, posMarkers, trackS, trackE })
+      updateSettings(currentId, {
+        tempo,
+        pitch,
+        loops,
+        posMarkers,
+        trackS,
+        trackE,
+        bpm, // undefined(미분석)는 저장돼도 무해 — 다음 로드에서 분석 재시도됨
+        bpmOffset,
+      })
     }, 300)
     return () => clearTimeout(timer) // 300ms 안에 또 바뀌면 이전 예약 취소 (디바운스)
-  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE])
+  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset])
 
   // 곡이 끝까지 재생되면 엔진이 알려줌 → 화면 상태 되돌리기
   useEffect(() => {
@@ -215,12 +257,17 @@ function App() {
       setTrackE(null)
       setPitch(0)
       player.pitchSemitones = 0
+      setBpm(undefined)
+      setBpmOffset(null)
 
       // 라이브러리에 저장 (동영상은 추출된 오디오만 저장 — 용량 절약 + 다음부턴 추출 생략)
       const meta = await addTrack(file.name, source, dur)
       setCurrentId(meta.id)
       setTracks(await getAllTracks())
       console.log(`디코딩 완료: ${file.name} (길이 ${dur.toFixed(1)}초) — 라이브러리 저장됨`)
+
+      // BPM 자동 분석 (백그라운드 — 끝나면 BPM 가젯에 표시되고 곡별 저장됨)
+      void runBpmAnalysis(meta.id)
     } catch (err) {
       // 디버깅용: 파일 정보와 에러 내용을 함께 출력
       console.error('오디오 디코딩 실패:', err)
@@ -260,16 +307,34 @@ function App() {
     player.tempo = rounded / 100
   }
 
-  // 마스터 볼륨 (Volume 가젯)
+  // 음원 볼륨 (Volume 가젯)
   const handleVolumeChange = (v: number) => {
     setVolume(v)
     player.volume = v / 100
+  }
+
+  // 메트로놈 볼륨 (Volume 가젯 — 음원과 개별 조절)
+  const handleMetroVolumeChange = (v: number) => {
+    setMetroVolume(v)
+    player.metroVolume = v / 100
   }
 
   // 피치 스테퍼 (Pitch 가젯 — 재생 중 실시간 반영)
   const handlePitchChange = (semitones: number) => {
     setPitch(semitones)
     player.pitchSemitones = semitones
+  }
+
+  // BPM ×2/÷2 교정 (자동 분석의 반배/두배 혼동 보정 — 첫 박 위치는 그대로 유효)
+  const handleBpmChange = (value: number) => {
+    setBpm(value)
+  }
+
+  // 메트로놈 토글 (BPM 가젯 — 재생 중 음악 위에 클릭음 얹기)
+  const handleMetroToggle = () => {
+    const next = !metroOn
+    setMetroOn(next)
+    player.metronome = next
   }
 
   // 루프 상태 변경: 화면 state와 엔진을 항상 함께 갱신
@@ -405,6 +470,15 @@ function App() {
       setTrackE(s.trackE)
       player.setTrackMarkers(s.trackS, s.trackE)
 
+      // BPM 복원 — 유효한 값이 없으면(미분석/구버전/직전 실패) 다시 분석
+      // (실패도 재시도하는 이유: 분석 로직이 개선되면 자동으로 다시 혜택받도록 — 백그라운드라 부담 없음)
+      setBpm(s.bpm)
+      setBpmOffset(s.bpmOffset ?? null)
+      setBpmAnalyzing(false)
+      if (s.bpm == null) {
+        void runBpmAnalysis(meta.id)
+      }
+
       if (autoPlay) {
         player.play()
         setIsPlaying(player.isPlaying)
@@ -500,6 +574,9 @@ function App() {
               onDeleteTrackS={handleDeleteTrackS}
               onDeleteTrackE={handleDeleteTrackE}
               onTogglePlay={togglePlay}
+              metroOn={metroOn}
+              canMetro={hasTrack && bpm != null}
+              onMetroToggle={handleMetroToggle}
             />
           </section>
 
@@ -538,7 +615,12 @@ function App() {
       <GadgetBar active={activeGadget} onSelect={handleGadgetSelect} />
       <div className="gadget-panel">
         {activeGadget === 'volume' && (
-          <VolumeGadget volume={volume} onChange={handleVolumeChange} />
+          <VolumeGadget
+            volume={volume}
+            metroVolume={metroVolume}
+            onChange={handleVolumeChange}
+            onMetroVolumeChange={handleMetroVolumeChange}
+          />
         )}
         {activeGadget === 'markers' && (
           <MarkersGadget
@@ -560,6 +642,15 @@ function App() {
         )}
         {activeGadget === 'pitch' && (
           <PitchGadget pitch={pitch} onChange={handlePitchChange} />
+        )}
+        {activeGadget === 'bpm' && (
+          <BpmGadget
+            hasTrack={hasTrack}
+            analyzing={bpmAnalyzing}
+            bpm={bpm}
+            tempo={tempo}
+            onChange={handleBpmChange}
+          />
         )}
       </div>
 

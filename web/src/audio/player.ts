@@ -53,6 +53,7 @@ export class Player {
   private gain: GainNode | null = null // 마스터 볼륨 (stretchNode → gain → 스피커)
   private stretchNode: StretchNode | null = null
   private stretchNodeReady: Promise<StretchNode> | null = null // 노드 생성은 1회만(앱 전체 재사용)
+  private audioBuffer_: AudioBuffer | null = null // 현재 곡의 디코딩 결과 (BPM 분석 등 외부 분석용)
   private duration_ = 0
   private playing = false
   private _tempo = 1 // 현재 템포 배율
@@ -71,6 +72,16 @@ export class Player {
 
   // iOS 무음 스위치 대응용 무음 오디오 태그 (앱 전체 1개)
   private silentAudio: HTMLAudioElement | null = null
+
+  // ── 메트로놈: BPM 그리드에 맞춰 클릭음을 음악 위에 얹음 ──
+  private metroOn = false
+  private metroBpm: number | null = null // null = 그리드 없음 (분석 실패/미분석)
+  private metroOffset = 0 // 첫 박 위치 (원곡 기준 초)
+  private metroNextBeat: number | null = null // 다음 예약할 박 인덱스 (null = 현재 위치에서 재계산)
+  private metroScheduled: { osc: OscillatorNode; gain: GainNode }[] = [] // 예약된 클릭 (취소용)
+  private stretchLatency = 0 // 스트레치 엔진 지연(초) — 클릭을 같은 만큼 늦춰야 음악과 정렬됨
+  private metroGain: GainNode | null = null // 메트로놈 전용 볼륨 (음원 볼륨과 독립)
+  private _metroVolume = 1 // 메트로놈 볼륨 (0~1)
 
   // 곡이 끝까지 재생됐을 때 화면에 알리는 콜백 (App에서 등록)
   onEnded: (() => void) | null = null
@@ -116,10 +127,16 @@ export class Player {
       this.ctx = new AudioContext()
     }
     if (!this.gain) {
-      // 마스터 볼륨 노드: 모든 소리가 여기를 거쳐 스피커로 나감
+      // 음원 볼륨 노드: 스트레치 엔진 출력이 여기를 거쳐 스피커로 나감
       this.gain = this.ctx.createGain()
       this.gain.gain.value = this._volume
       this.gain.connect(this.ctx.destination)
+    }
+    if (!this.metroGain) {
+      // 메트로놈 볼륨 노드: 클릭음 전용 (음원과 개별 조절)
+      this.metroGain = this.ctx.createGain()
+      this.metroGain.gain.value = this._metroVolume
+      this.metroGain.connect(this.ctx.destination)
     }
     // ⚠️ iOS는 'suspended' 외에 'interrupted'(전화/파일피커/앱전환 등) 상태도 있음 — running이 아니면 전부 깨움
     if (this.ctx.state !== 'running') {
@@ -145,6 +162,11 @@ export class Player {
           this.stretchNode = node
           // 시크 반응 속도 우선 튜닝 (기본 120ms 블록은 마커 이동 딜레이가 체감됨)
           node.configure({ blockMs: STRETCH_BLOCK_MS })
+          // 엔진 지연 측정 (메트로놈 클릭 싱크 보정용 — configure 이후 값이어야 함)
+          node.latency().then((sec) => {
+            this.stretchLatency = sec
+            console.log(`스트레치 엔진 지연: ${(sec * 1000).toFixed(0)}ms`)
+          })
           node.setUpdateInterval(POSITION_UPDATE_INTERVAL, (pos) => this.checkPosition(pos))
           node.connect(this.gain ?? ctx.destination) // 항상 연결, active 플래그로만 소리 on/off
           return node
@@ -173,6 +195,7 @@ export class Player {
 
     const arrayBuffer = await file.arrayBuffer()
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
+    this.audioBuffer_ = audioBuffer // BPM 분석 등에서 재사용 (곡 교체 시 함께 교체됨)
     this.duration_ = audioBuffer.duration
     const channels: Float32Array[] = []
     for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
@@ -195,6 +218,11 @@ export class Player {
     return this.duration_
   }
 
+  // 현재 곡의 디코딩된 버퍼 (BPM 분석용 — 곡이 없으면 null)
+  get audioBuffer(): AudioBuffer | null {
+    return this.audioBuffer_
+  }
+
   get isPlaying(): boolean {
     return this.playing
   }
@@ -212,9 +240,10 @@ export class Player {
   set tempo(value: number) {
     this._tempo = Math.max(MIN_TEMPO, Math.min(value, MAX_TEMPO))
     this.stretchNode?.schedule({ rate: this._tempo }) // 재생 중 실시간 반영
+    this.cancelClicks() // 예약된 클릭 시각은 이전 배속 기준 — 전부 다시 계산
   }
 
-  // 마스터 볼륨 (0~1)
+  // 음원 볼륨 (0~1)
   get volume(): number {
     return this._volume
   }
@@ -223,6 +252,18 @@ export class Player {
     this._volume = Math.max(0, Math.min(value, 1))
     if (this.gain) {
       this.gain.gain.value = this._volume
+    }
+  }
+
+  // 메트로놈 볼륨 (0~1 — 음원 볼륨과 독립)
+  get metroVolume(): number {
+    return this._metroVolume
+  }
+
+  set metroVolume(value: number) {
+    this._metroVolume = Math.max(0, Math.min(value, 1))
+    if (this.metroGain) {
+      this.metroGain.gain.value = this._metroVolume
     }
   }
 
@@ -255,6 +296,7 @@ export class Player {
 
     this.stretchNode.schedule({ active: true })
     this.playing = true
+    this.scheduleMetronome(this.position) // 첫 위치 갱신(50ms)을 기다리지 않고 바로 예약 시작
 
     // 1초 뒤 위치가 안 움직였으면 워클릿이 실제로 안 도는 것 (iOS 디버깅용)
     const posAtStart = this.position
@@ -273,6 +315,7 @@ export class Player {
     if (!this.stretchNode || !this.playing) return
     this.stretchNode.schedule({ active: false }) // 위치는 노드 내부에 유지됨
     this.playing = false
+    this.cancelClicks() // 음악이 멈추면 예약된 클릭도 안 나가야 함
   }
 
   // 지정 위치로 이동 (재생 중이면 그 위치에서 계속 흘러나옴)
@@ -280,6 +323,7 @@ export class Player {
     if (!this.stretchNode || this.duration_ === 0) return
     const clamped = Math.max(0, Math.min(pos, this.duration_))
     this.stretchNode.schedule({ input: clamped })
+    this.cancelClicks() // 위치가 점프하면 예약된 클릭 시각은 전부 무효 (루프 복귀 포함)
   }
 
   // 구간 루프 목록 교체 (화면의 루프 상태와 동기화)
@@ -298,6 +342,89 @@ export class Player {
     return this.trackStart ?? 0
   }
 
+  // ── 메트로놈 ──
+
+  // 메트로놈 on/off (그리드가 없으면 켜도 소리 안 남)
+  get metronome(): boolean {
+    return this.metroOn
+  }
+
+  set metronome(on: boolean) {
+    this.metroOn = on
+    this.cancelClicks() // 끄면 예약분 제거, 켜면 다음 위치 갱신부터 새로 예약
+  }
+
+  // BPM 그리드 설정 (분석 결과 또는 ×2/÷2 교정값 — 곡/값 변경 시마다 호출)
+  setBpmGrid(bpm: number | null, offset: number | null): void {
+    this.metroBpm = bpm
+    this.metroOffset = offset ?? 0
+    this.cancelClicks() // 그리드가 바뀌면 기존 예약은 전부 무효
+  }
+
+  // 예약된 클릭 전부 취소 + 박 인덱스 재계산 예약
+  // (시크/루프 점프/템포 변경/그리드 변경 — 기존 예약 시각이 전부 틀어지는 경우)
+  private cancelClicks(): void {
+    for (const { osc, gain } of this.metroScheduled) {
+      try {
+        osc.stop()
+      } catch {
+        // 이미 끝난 클릭이면 무시
+      }
+      gain.disconnect()
+    }
+    this.metroScheduled = []
+    this.metroNextBeat = null
+  }
+
+  // 클릭음 1개 예약 (1kHz 사인 버스트 30ms — 파일 없이 합성, 메트로놈 볼륨 경유)
+  private scheduleClick(at: number): void {
+    const ctx = this.ctx
+    if (!ctx || !this.metroGain) return
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'sine'
+    osc.frequency.value = 1000
+    gain.gain.setValueAtTime(0.6, at)
+    gain.gain.exponentialRampToValueAtTime(0.001, at + 0.03) // 짧은 감쇠 = "틱" 소리
+    osc.connect(gain)
+    gain.connect(this.metroGain)
+    osc.start(at)
+    osc.stop(at + 0.04)
+
+    const entry = { osc, gain }
+    this.metroScheduled.push(entry)
+    // 끝난 클릭은 목록에서 제거 (취소 대상은 미래 예약분만 남게)
+    osc.onended = () => {
+      this.metroScheduled = this.metroScheduled.filter((e) => e !== entry)
+    }
+  }
+
+  // 다가오는 박들을 미리 예약 (위치 갱신 콜백 50ms 주기마다 호출됨)
+  // 원곡 시간 그리드 → 재생 배속 환산 + 엔진 지연 보정으로 실제 클릭 시각 계산
+  private scheduleMetronome(pos: number): void {
+    if (!this.metroOn || this.metroBpm === null || !this.ctx || !this.playing) return
+
+    const spb = 60 / this.metroBpm // 박 간격 (원곡 기준 초)
+    const rate = this._tempo
+    const now = this.ctx.currentTime
+    // 앞으로 0.25초(실시간) 안에 나올 박까지 예약 — 갱신 주기(50ms)보다 넉넉하게
+    const horizon = pos + 0.25 * rate
+
+    // 시크/재시작 직후에는 현재 위치 기준으로 다음 박 인덱스 재계산
+    let k =
+      this.metroNextBeat ?? Math.ceil((pos - this.metroOffset) / spb - 1e-6)
+
+    while (this.metroOffset + k * spb <= horizon) {
+      const beatTime = this.metroOffset + k * spb
+      if (beatTime >= pos - 1e-3) {
+        // 원곡 시간 차이를 배속으로 나누면 실시간 차이 + 엔진 지연만큼 지연
+        this.scheduleClick(now + (beatTime - pos) / rate + this.stretchLatency)
+      }
+      k++
+    }
+    this.metroNextBeat = k
+  }
+
   // 루프 끝점 통과 판정 여유 (위치 갱신 주기보다 넉넉하게)
   // 이 범위를 벗어난 위치에서는 루프가 안 걸림 → 휠로 구간 밖 탐색 시 강제로 안 끌려옴
   private static readonly LOOP_MARGIN = 0.35
@@ -305,6 +432,9 @@ export class Player {
   // 재생 위치 감시 (StretchNode의 위치 갱신 콜백마다 호출)
   private checkPosition(pos: number): void {
     if (!this.playing) return
+
+    // 메트로놈: 다가오는 박 클릭 예약
+    this.scheduleMetronome(pos)
 
     // 1순위: 구간 루프 — "끝점을 방금 지난" 루프만 시작점으로 복귀
     // (구간 안에서 재생 중일 때만 반복되고, 밖으로 탐색해 나가면 자유)

@@ -456,6 +456,11 @@
   margin-top: 8px;
 }
 
+/* 두 번째 슬라이더(메트로놈) 앞 간격 — 고정 높이 패널(132px) 안에 2줄 배치 */
+.volume-gadget input[type='range'] + .volume-label + input[type='range'] {
+  margin-top: 14px;
+}
+
 /* G-04 Markers: 원본 레이아웃 — 라벨 위 + 핀 글리프 아래, 한 줄 그룹 배치 */
 .markers-gadget {
   display: flex;
@@ -584,11 +589,89 @@
   filter: var(--glow-text);
 }
 
+/* BPM 가젯 — [÷2] [값 BPM] [×2] (1단계 임시 레이아웃, 추후 다듬기) */
+.bpm-gadget {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+}
+
+.bpm-adjust {
+  width: 68px;
+  padding: 10px 0;
+  background: none;
+  border: 2px solid var(--neon);
+  border-radius: 14px;
+  color: var(--neon);
+  font-size: 20px;
+  font-weight: bold;
+  filter: var(--glow-text);
+  cursor: pointer;
+}
+
+.bpm-adjust:disabled {
+  color: var(--text-dim);
+  border-color: var(--text-dim);
+  filter: none;
+  cursor: default;
+}
+
+.bpm-display {
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--neon);
+  filter: var(--glow-text);
+}
+
+.bpm-display .bpm-value {
+  font-size: 30px;
+  font-weight: bold;
+  line-height: 1.1;
+}
+
+.bpm-display .bpm-unit {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+}
+
+/* 배속 반영 BPM (현재 템포가 100%가 아닐 때만 표시) */
+.bpm-display .bpm-effective {
+  font-size: 12px;
+  margin-top: 2px;
+  color: var(--text-dim);
+}
+
+
 /* P-01 재생/일시정지: 왼쪽 아래 테두리 없는 삼각형 (원본 재현) */
 .play-row {
   width: min(92vw, 390px);
   display: flex;
-  justify-content: flex-start;
+  justify-content: space-between; /* 왼쪽 재생 ↔ 오른쪽 메트로놈 (사용자 결정) */
+  align-items: center;
+}
+
+/* 메트로놈 토글 (♩) — 켜지면 네온 발광으로 상태 표시 */
+.metro-btn {
+  width: 54px;
+  height: 54px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 34px;
+  cursor: pointer;
+}
+
+.metro-btn.on {
+  color: var(--neon);
+  filter: var(--glow-text);
+}
+
+.metro-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .play-tri {

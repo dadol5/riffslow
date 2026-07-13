@@ -21,6 +21,10 @@ export interface TrackSettings {
   posMarkers: number[] // 위치 마커 목록 (초)
   trackS: number | null // 시작(S)/끝(E) 마커 (초)
   trackE: number | null
+  // BPM 자동 분석 결과 (구버전 데이터엔 없음)
+  // undefined = 아직 분석 안 함, null = 직전 분석 실패 — 둘 다 로드 시 재분석함
+  bpm?: number | null
+  bpmOffset?: number | null // 첫 박 위치 (초) — 메트로놈 그리드 기준점
 }
 
 export interface TrackMeta {

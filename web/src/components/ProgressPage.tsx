@@ -21,6 +21,9 @@ interface ProgressPageProps {
   onDeleteTrackS: () => void
   onDeleteTrackE: () => void
   onTogglePlay: () => void
+  metroOn: boolean // 메트로놈 클릭 on/off
+  canMetro: boolean // BPM이 있어야 켤 수 있음
+  onMetroToggle: () => void
 }
 
 function ProgressPage({
@@ -41,6 +44,9 @@ function ProgressPage({
   onDeleteTrackS,
   onDeleteTrackE,
   onTogglePlay,
+  metroOn,
+  canMetro,
+  onMetroToggle,
 }: ProgressPageProps) {
   return (
     <>
@@ -61,7 +67,8 @@ function ProgressPage({
         onDeleteTrackE={onDeleteTrackE}
       />
 
-      {/* 재생/일시정지 (원본: 왼쪽 아래 테두리 없는 삼각형 — P-02 중앙 버튼과 상태 동기화) */}
+      {/* 재생/일시정지 (원본: 왼쪽 아래 테두리 없는 삼각형 — P-02 중앙 버튼과 상태 동기화)
+          + 반대편(오른쪽)에 메트로놈 토글 (사용자 결정) */}
       <div className="play-row">
         <button
           className="play-tri"
@@ -79,6 +86,15 @@ function ProgressPage({
               <path d="M 8 4 L 28 16 L 8 28 Z" />
             )}
           </svg>
+        </button>
+
+        <button
+          className={`metro-btn${metroOn ? ' on' : ''}`}
+          onClick={onMetroToggle}
+          disabled={!canMetro}
+          aria-label="메트로놈"
+        >
+          ♩
         </button>
       </div>
     </>
