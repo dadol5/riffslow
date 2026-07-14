@@ -616,8 +616,15 @@
   cursor: default;
 }
 
+/* 숫자+자물쇠 묶음 — 자물쇠는 숫자 바로 옆에 붙임 (−/+ 간격 유지) */
+.bpm-center {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .bpm-display {
-  min-width: 120px;
+  min-width: 88px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -637,11 +644,37 @@
   color: var(--text-dim);
 }
 
-/* 배속 반영 BPM (현재 템포가 100%가 아닐 때만 표시) */
+/* 보조 표기: 잠김 상태의 100% 기준값 병기 / 열림 상태의 안내 문구 */
 .bpm-display .bpm-effective {
   font-size: 12px;
   margin-top: 2px;
   color: var(--text-dim);
+}
+
+/* BPM 자물쇠 — 잠김 = 흐림(표시 전용), 열림 = 네온(조절 모드) */
+.bpm-lock {
+  width: 36px;
+  height: 36px;
+  padding: 7px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.bpm-lock.open {
+  color: var(--neon);
+  filter: var(--glow-text);
+}
+
+.bpm-lock:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.bpm-lock .icon {
+  width: 100%;
+  height: 100%;
 }
 
 

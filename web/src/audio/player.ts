@@ -73,6 +73,12 @@ export class Player {
   // iOS 무음 스위치 대응용 무음 오디오 태그 (앱 전체 1개)
   private silentAudio: HTMLAudioElement | null = null
 
+  // 앱 복귀 소생 리스너 중복 등록 방지 (컨텍스트 재생성 시 ensureContext가 다시 돌기 때문)
+  private reviveAttached = false
+
+  // 파이프라인 재생성 중복 실행 방지
+  private rebuilding = false
+
   // ── 메트로놈: BPM 그리드에 맞춰 클릭음을 음악 위에 얹음 ──
   private metroOn = false
   private metroBpm: number | null = null // null = 그리드 없음 (분석 실패/미분석)
@@ -125,6 +131,34 @@ export class Player {
   ensureContext(): void {
     if (!this.ctx) {
       this.ctx = new AudioContext()
+
+      // 상태 변화 추적 (iOS는 다른 앱이 오디오를 쓰면 'interrupted'로 뺏김 — 언제 뺏기는지 기록)
+      this.ctx.onstatechange = () => {
+        console.log(`오디오 컨텍스트 상태 변화: ${this.ctx?.state}`)
+      }
+
+      // 앱 복귀 시 자동 소생 (사진 앱에서 동영상 재생 후 돌아오는 등 — iOS 표준 대응)
+      // 제스처 밖이라 거부될 수 있지만, 되는 iOS 버전에선 이걸로 바로 살아남
+      // (리스너는 앱 전체 1회만 — this.ctx를 매번 참조하므로 컨텍스트가 재생성돼도 유효)
+      if (!this.reviveAttached) {
+        this.reviveAttached = true
+        const revive = () => {
+          if (document.visibilityState !== 'visible') return
+          if (this.ctx && this.ctx.state !== 'running') {
+            console.log(`앱 복귀 감지 → 컨텍스트 소생 시도 (현재 ${this.ctx.state})`)
+            this.ctx.resume().then(
+              () => console.log(`복귀 소생 완료 → ${this.ctx?.state}`),
+              (e) => console.warn(`복귀 소생 실패: ${e}`),
+            )
+          }
+          // 무음 오디오도 다른 앱에 뺏기면 멈춰 있음 → 재가동 (미디어 세션 재획득)
+          if (this.silentAudio?.paused) {
+            this.silentAudio.play().catch(() => {})
+          }
+        }
+        document.addEventListener('visibilitychange', revive)
+        window.addEventListener('pageshow', revive)
+      }
     }
     if (!this.gain) {
       // 음원 볼륨 노드: 스트레치 엔진 출력이 여기를 거쳐 스피커로 나감
@@ -298,24 +332,92 @@ export class Player {
     this.playing = true
     this.scheduleMetronome(this.position) // 첫 위치 갱신(50ms)을 기다리지 않고 바로 예약 시작
 
-    // 1초 뒤 위치가 안 움직였으면 워클릿이 실제로 안 도는 것 (iOS 디버깅용)
+    // 1초 뒤 위치가 안 움직였으면 엔진이 실제로 안 도는 것 → 자동 소생 시도 (iOS 중단 복구)
     const posAtStart = this.position
     setTimeout(() => {
-      if (this.playing && this.position === posAtStart) {
-        console.warn(
-          `⚠️ 재생 1초 경과에도 위치 정지 (${posAtStart.toFixed(2)}s) — 워클릿 미동작 의심, ctx 상태 ${this.ctx?.state}`,
-        )
-      } else if (this.playing) {
+      if (!this.playing) return
+      if (this.position !== posAtStart) {
         console.log(`재생 진행 확인: ${posAtStart.toFixed(2)}s → ${this.position.toFixed(2)}s`)
+        return
       }
+
+      console.warn(
+        `⚠️ 재생 1초 경과에도 위치 정지 (${posAtStart.toFixed(2)}s), ctx 상태 ${this.ctx?.state} → 소생 재시도`,
+      )
+      // 소생 재시도: 컨텍스트 resume + 재생 상태 재점화
+      this.ctx?.resume().then(
+        () => console.log(`소생 resume 완료 → ${this.ctx?.state}`),
+        (e) => console.warn(`소생 resume 실패: ${e}`),
+      )
+      this.stretchNode?.schedule({ active: true })
+
+      // 그래도 안 움직이면 좀비 확정 → 파이프라인 전체 재생성 (실기기에서 확인된 케이스)
+      setTimeout(() => {
+        if (this.playing && this.position === posAtStart) {
+          console.error(
+            `❌ 소생 실패: 엔진 정지 상태 지속, ctx 상태 ${this.ctx?.state} → 파이프라인 재생성`,
+          )
+          void this.rebuildPipeline(posAtStart)
+        } else if (this.playing) {
+          console.log(`소생 성공: ${this.position.toFixed(2)}s부터 재생 재개`)
+        }
+      }, 1000)
     }, 1000)
   }
 
   pause(): void {
-    if (!this.stretchNode || !this.playing) return
-    this.stretchNode.schedule({ active: false }) // 위치는 노드 내부에 유지됨
-    this.playing = false
+    if (!this.playing) return
+    this.playing = false // 노드가 없어도(재생성 중) 상태는 확실히 내림 — 재생성 후 오동작 방지
+    this.stretchNode?.schedule({ active: false }) // 위치는 노드 내부에 유지됨
     this.cancelClicks() // 음악이 멈추면 예약된 클릭도 안 나가야 함
+  }
+
+  // 오디오 파이프라인 전체 재생성 (iOS 좀비 컨텍스트 복구 — running인데 렌더링 스레드가 죽은 상태)
+  // 다른 앱(동영상/음악)이 오디오 세션을 뺏은 뒤 복귀하면 resume으로 못 살리는 경우가 있음
+  private async rebuildPipeline(resumePos: number): Promise<void> {
+    if (this.rebuilding || !this.audioBuffer_) return
+    this.rebuilding = true
+    console.warn('오디오 파이프라인 재생성 시작 (좀비 컨텍스트 복구)')
+    try {
+      this.cancelClicks()
+      // 옛 컨텍스트 폐기 (닫기 실패는 무시 — 어차피 죽은 컨텍스트)
+      const old = this.ctx
+      this.ctx = null
+      this.gain = null
+      this.metroGain = null
+      this.stretchNode = null
+      this.stretchNodeReady = null
+      old?.close().catch(() => {})
+
+      // 새 컨텍스트 + 볼륨 노드 + 스트레치 노드 생성 (설정값은 필드에 남아 있어 그대로 복원됨)
+      this.ensureContext()
+      const node = await this.getStretchNode()
+
+      // 보관해둔 디코딩 버퍼 재주입 + 멈췄던 위치/템포/피치 복원
+      const channels: Float32Array[] = []
+      for (let c = 0; c < this.audioBuffer_.numberOfChannels; c++) {
+        channels.push(this.audioBuffer_.getChannelData(c))
+      }
+      await node.schedule({
+        active: false,
+        input: resumePos,
+        rate: this._tempo,
+        semitones: this._pitch,
+      })
+      await node.addBuffers(channels)
+
+      // 재생 중이었다면(그 사이 사용자가 일시정지 안 했다면) 이어서 재생
+      if (this.playing) {
+        node.schedule({ active: true })
+      }
+      // (TS가 위의 this.ctx = null 대입만 보고 타입을 좁혀버려서 단언으로 풀어줌 — ensureContext()가 재생성함)
+      const ctx = this.ctx as AudioContext | null
+      console.log(`파이프라인 재생성 완료: 위치 ${resumePos.toFixed(2)}s, ctx 상태 ${ctx?.state}`)
+    } catch (err) {
+      console.error(`파이프라인 재생성 실패: ${err}`)
+    } finally {
+      this.rebuilding = false
+    }
   }
 
   // 지정 위치로 이동 (재생 중이면 그 위치에서 계속 흘러나옴)
@@ -384,7 +486,7 @@ export class Player {
     const gain = ctx.createGain()
     osc.type = 'sine'
     osc.frequency.value = 1000
-    gain.gain.setValueAtTime(0.6, at)
+    gain.gain.setValueAtTime(1.0, at) // 최대 음량 (0.6은 음원에 묻힌다는 실기기 피드백)
     gain.gain.exponentialRampToValueAtTime(0.001, at + 0.03) // 짧은 감쇠 = "틱" 소리
     osc.connect(gain)
     gain.connect(this.metroGain)

@@ -66,6 +66,7 @@ function App() {
   const [bpmOffset, setBpmOffset] = useState<number | null>(null) // 첫 박 위치 (메트로놈용)
   const [bpmAnalyzing, setBpmAnalyzing] = useState(false)
   const [metroOn, setMetroOn] = useState(false) // 메트로놈 on/off (세션 한정 — 저장 안 함)
+  const [bpmLocked, setBpmLocked] = useState(true) // BPM 자물쇠 (잠김 = 조절 불가 + 속도 반영 표시)
   const [metroVolume, setMetroVolume] = useState(100) // 메트로놈 볼륨 % (음원과 개별)
 
   // BPM 그리드가 바뀔 때마다 엔진에 반영 (곡 교체/분석 완료/×2·÷2 교정 모두 포함)
@@ -328,6 +329,11 @@ function App() {
   // BPM ×2/÷2 교정 (자동 분석의 반배/두배 혼동 보정 — 첫 박 위치는 그대로 유효)
   const handleBpmChange = (value: number) => {
     setBpm(value)
+  }
+
+  // BPM 자물쇠 토글 (열림 = 100% 기준값 조절 모드, 잠김 = 설정한 값이 100% 기준으로 확정)
+  const handleBpmLockToggle = () => {
+    setBpmLocked((locked) => !locked)
   }
 
   // 메트로놈 토글 (BPM 가젯 — 재생 중 음악 위에 클릭음 얹기)
@@ -649,7 +655,9 @@ function App() {
             analyzing={bpmAnalyzing}
             bpm={bpm}
             tempo={tempo}
+            locked={bpmLocked}
             onChange={handleBpmChange}
+            onToggleLock={handleBpmLockToggle}
           />
         )}
       </div>
