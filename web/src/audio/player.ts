@@ -478,20 +478,22 @@ export class Player {
     this.metroNextBeat = null
   }
 
-  // 클릭음 1개 예약 (1kHz 사인 버스트 30ms — 파일 없이 합성, 메트로놈 볼륨 경유)
+  // 클릭음 1개 예약 (파일 없이 합성, 메트로놈 볼륨 경유)
+  // 1kHz 사인은 부드러워서 음원에 묻힘(실기기 피드백) → 배음 많은 사각파 + 귀가 민감한
+  // 2kHz 근처 고음으로 교체 = 믹스를 뚫고 나오는 날카로운 "틱" 소리
   private scheduleClick(at: number): void {
     const ctx = this.ctx
     if (!ctx || !this.metroGain) return
     const osc = ctx.createOscillator()
     const gain = ctx.createGain()
-    osc.type = 'sine'
-    osc.frequency.value = 1000
-    gain.gain.setValueAtTime(1.0, at) // 최대 음량 (0.6은 음원에 묻힌다는 실기기 피드백)
-    gain.gain.exponentialRampToValueAtTime(0.001, at + 0.03) // 짧은 감쇠 = "틱" 소리
+    osc.type = 'square' // 배음이 많아 사인보다 체감 음량이 훨씬 큼
+    osc.frequency.value = 1800
+    gain.gain.setValueAtTime(1.0, at)
+    gain.gain.exponentialRampToValueAtTime(0.001, at + 0.025) // 더 짧은 감쇠 = 또렷한 "틱"
     osc.connect(gain)
     gain.connect(this.metroGain)
     osc.start(at)
-    osc.stop(at + 0.04)
+    osc.stop(at + 0.03)
 
     const entry = { osc, gain }
     this.metroScheduled.push(entry)
