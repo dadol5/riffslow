@@ -9,7 +9,9 @@ import VolumeGadget from './components/gadgets/VolumeGadget'
 import MarkersGadget from './components/gadgets/MarkersGadget'
 import PitchGadget from './components/gadgets/PitchGadget'
 import BpmGadget from './components/gadgets/BpmGadget'
+import ChordsGadget from './components/gadgets/ChordsGadget'
 import { analyzeBpm } from './audio/bpm'
+import { analyzeChords, type ChordSegment } from './audio/chords'
 import {
   addTrack,
   deleteTrack,
@@ -81,16 +83,57 @@ function App() {
   }, [currentId])
 
   // BPM 자동 분석 (로드 완료 후 백그라운드 실행 — 재생/UI를 막지 않음)
+  // 결과를 반환해서 후속 코드 분석이 박 정렬 그리드로 바로 쓸 수 있게 함 (state는 반영이 늦음)
   const runBpmAnalysis = async (trackId: number) => {
     const buffer = player.audioBuffer
-    if (!buffer) return
+    if (!buffer) return null
     setBpmAnalyzing(true)
     const result = await analyzeBpm(buffer)
     // 분석 도중 다른 곡으로 바뀌었으면 결과 폐기 (그 곡의 로드 흐름이 상태를 관리)
-    if (currentIdRef.current !== trackId) return
+    if (currentIdRef.current !== trackId) return null
     setBpmAnalyzing(false)
     setBpm(result?.bpm ?? null) // 실패는 null 저장 → 다음 로드 때 재분석됨
     setBpmOffset(result?.offset ?? null)
+    return result
+  }
+
+  // ── 코드/KEY (곡별 저장): undefined = 미분석, null = 실패, 배열 = 값 ──
+  // 분석 로직 버전 — 로직이 바뀌면 올려서 기존 저장 데이터를 자동 재분석
+  // (v4: 박 정렬, v5: HPSS+베이스 루트+다이어토닉+Viterbi, v6: 드럼 구간 게이트+마디 스냅)
+  const CHORDS_ANALYSIS_VERSION = 6
+  const [chords, setChords] = useState<ChordSegment[] | null | undefined>(undefined)
+  const [songKey, setSongKey] = useState<string | null | undefined>(undefined)
+  const [chordsVer, setChordsVer] = useState(CHORDS_ANALYSIS_VERSION)
+  const [chordsAnalyzing, setChordsAnalyzing] = useState(false)
+
+  // 코드/KEY 자동 분석 (워커에서 수행 — 수~수십 초 걸리지만 UI/재생에 영향 없음)
+  // beatGrid가 있으면 코드 경계가 박자에 정렬됨
+  const runChordAnalysis = async (
+    trackId: number,
+    beatGrid: { bpm: number; offset: number } | null,
+  ) => {
+    const buffer = player.audioBuffer
+    if (!buffer) return
+    setChordsAnalyzing(true)
+    console.log(`코드/KEY 분석 시작 (백그라운드, 박 정렬 ${beatGrid ? 'ON' : 'OFF'})...`)
+    const started = performance.now()
+    const result = await analyzeChords(buffer, beatGrid)
+    if (currentIdRef.current !== trackId) return
+    setChordsAnalyzing(false)
+    setChords(result?.segments ?? null)
+    setSongKey(result?.key ?? null)
+    setChordsVer(CHORDS_ANALYSIS_VERSION)
+    if (result) {
+      // 1단계 검증용 로그: KEY + 앞부분 코드 진행을 눈으로 확인
+      const preview = result.segments
+        .slice(0, 20)
+        .map((s) => `${s.start.toFixed(1)}~${s.end.toFixed(1)} ${s.chord}`)
+        .join(' | ')
+      console.log(
+        `코드 분석 완료 (${((performance.now() - started) / 1000).toFixed(1)}초): KEY = ${result.key}, 구간 ${result.segments.length}개`,
+      )
+      console.log(`앞부분 진행: ${preview}`)
+    }
   }
 
   // ── 페이지 스와이프: 손가락을 따라 실시간으로 끌리고, 놓으면 스냅 ──
@@ -197,10 +240,13 @@ function App() {
         trackE,
         bpm, // undefined(미분석)는 저장돼도 무해 — 다음 로드에서 분석 재시도됨
         bpmOffset,
+        chords,
+        songKey,
+        chordsVer,
       })
     }, 300)
     return () => clearTimeout(timer) // 300ms 안에 또 바뀌면 이전 예약 취소 (디바운스)
-  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset])
+  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset, chords, songKey, chordsVer])
 
   // 곡이 끝까지 재생되면 엔진이 알려줌 → 화면 상태 되돌리기
   useEffect(() => {
@@ -260,6 +306,8 @@ function App() {
       player.pitchSemitones = 0
       setBpm(undefined)
       setBpmOffset(null)
+      setChords(undefined)
+      setSongKey(undefined)
 
       // 라이브러리에 저장 (동영상은 추출된 오디오만 저장 — 용량 절약 + 다음부턴 추출 생략)
       const meta = await addTrack(file.name, source, dur)
@@ -267,8 +315,11 @@ function App() {
       setTracks(await getAllTracks())
       console.log(`디코딩 완료: ${file.name} (길이 ${dur.toFixed(1)}초) — 라이브러리 저장됨`)
 
-      // BPM 자동 분석 (백그라운드 — 끝나면 BPM 가젯에 표시되고 곡별 저장됨)
-      void runBpmAnalysis(meta.id)
+      // BPM → 코드/KEY 순차 자동 분석 (백그라운드 — 동시에 돌리면 폰 CPU 부담이라 순차로)
+      // BPM 결과가 있으면 코드 경계를 박자에 정렬
+      void runBpmAnalysis(meta.id).then((b) =>
+        runChordAnalysis(meta.id, b ? { bpm: b.bpm, offset: b.offset } : null),
+      )
     } catch (err) {
       // 디버깅용: 파일 정보와 에러 내용을 함께 출력
       console.error('오디오 디코딩 실패:', err)
@@ -476,13 +527,33 @@ function App() {
       setTrackE(s.trackE)
       player.setTrackMarkers(s.trackS, s.trackE)
 
-      // BPM 복원 — 유효한 값이 없으면(미분석/구버전/직전 실패) 다시 분석
+      // BPM/코드/KEY 복원 — 유효한 값이 없으면(미분석/구버전/직전 실패) 다시 분석
       // (실패도 재시도하는 이유: 분석 로직이 개선되면 자동으로 다시 혜택받도록 — 백그라운드라 부담 없음)
       setBpm(s.bpm)
       setBpmOffset(s.bpmOffset ?? null)
       setBpmAnalyzing(false)
-      if (s.bpm == null) {
-        void runBpmAnalysis(meta.id)
+      setChords(s.chords)
+      setSongKey(s.songKey)
+      setChordsVer(s.chordsVer ?? 1)
+      setChordsAnalyzing(false)
+      if (s.chords != null) {
+        console.log(`저장된 코드 복원: KEY = ${s.songKey}, 구간 ${s.chords.length}개`)
+      }
+      const needBpm = s.bpm == null
+      // 미분석/실패뿐 아니라 구버전 로직으로 분석된 데이터도 재분석 대상
+      const needChords = s.chords == null || (s.chordsVer ?? 1) < CHORDS_ANALYSIS_VERSION
+      if (needBpm || needChords) {
+        // 필요한 것만 순차 실행 (동시에 돌리면 폰 CPU 부담)
+        void (async () => {
+          // 박 정렬용 그리드: 저장된 BPM이 있으면 그것, 없으면 방금 분석한 결과
+          let grid =
+            s.bpm != null && s.bpmOffset != null ? { bpm: s.bpm, offset: s.bpmOffset } : null
+          if (needBpm) {
+            const b = await runBpmAnalysis(meta.id)
+            grid = b ? { bpm: b.bpm, offset: b.offset } : null
+          }
+          if (needChords) await runChordAnalysis(meta.id, grid)
+        })()
       }
 
       if (autoPlay) {
@@ -648,6 +719,21 @@ function App() {
         )}
         {activeGadget === 'pitch' && (
           <PitchGadget pitch={pitch} onChange={handlePitchChange} />
+        )}
+        {activeGadget === 'chords' && (
+          <ChordsGadget
+            hasTrack={hasTrack}
+            analyzing={chordsAnalyzing}
+            chords={chords}
+            songKey={songKey}
+            // 재생 중엔 엔진 출력 지연만큼 앞서가는 위치를 "지금 들리는 소리" 기준으로 보정
+            position={
+              isPlaying
+                ? Math.max(0, position - player.playbackLatency * (tempo / 100))
+                : position
+            }
+            onSeek={handleSeek}
+          />
         )}
         {activeGadget === 'bpm' && (
           <BpmGadget

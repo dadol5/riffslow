@@ -6,6 +6,7 @@
 // 분리 이유: 목록 조회 시 모든 곡의 Blob을 메모리에 올리지 않기 위해
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import type { ChordSegment } from '../audio/chords'
 
 // 구간 루프: 여러 개 존재 가능, end가 null이면 시작점만 찍힌 미완성 루프
 export interface Loop {
@@ -25,6 +26,10 @@ export interface TrackSettings {
   // undefined = 아직 분석 안 함, null = 직전 분석 실패 — 둘 다 로드 시 재분석함
   bpm?: number | null
   bpmOffset?: number | null // 첫 박 위치 (초) — 메트로놈 그리드 기준점
+  // 코드/KEY 자동 분석 결과 (undefined/null 규칙은 bpm과 동일)
+  chords?: ChordSegment[] | null
+  songKey?: string | null // 예: "C minor"
+  chordsVer?: number // 분석 로직 버전 — 로직이 개선되면 낮은 버전 데이터는 자동 재분석
 }
 
 export interface TrackMeta {

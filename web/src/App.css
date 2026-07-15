@@ -377,9 +377,21 @@
 /* ── 가젯 탭 바 (가로 스크롤, 높이 고정) ── */
 .gadget-tabs {
   display: flex;
-  justify-content: space-evenly; /* 탭 3개를 화면 폭에 고르게 분배 (원본 재현) */
+  gap: 8px;
   padding: 4px 12px;
   flex-shrink: 0; /* 탭 바도 고정 영역 */
+  /* 한 화면에 4개(원래 구성)만 보이고, 옆으로 밀면 다음 페이지(Chords...)로 넘어가는 방식 */
+  overflow-x: auto;
+  scrollbar-width: none; /* 스크롤바 숨김 (파이어폭스) */
+  -webkit-overflow-scrolling: touch; /* iOS 관성 스크롤 */
+  scroll-snap-type: x mandatory; /* 페이지 단위로 딱딱 걸림 */
+  scroll-padding-left: 12px; /* 스냅 시 좌측 패딩만큼 들여서 정렬 */
+}
+
+/* 마지막 페이지 채움 스페이서: 탭이 4의 배수가 아니어도 페이지 단위로 정확히 스냅되게 */
+.gadget-tabs::after {
+  content: '';
+  flex: 0 0 calc(75% - 18px); /* 탭 3개 자리 (Chords 1개 + 빈자리 3개 = 한 페이지) */
 }
 
 .gadget-tabs::-webkit-scrollbar {
@@ -387,7 +399,10 @@
 }
 
 .gadget-tab {
-  padding: 9px 16px;
+  /* 화면 폭의 1/4씩 — 한 페이지에 딱 4개 */
+  flex: 0 0 calc(25% - 6px);
+  padding: 9px 0;
+  text-align: center;
   border: 1.5px solid var(--neon); /* 원본처럼 얇은 테두리 */
   border-radius: 8px;
   background: transparent;
@@ -396,6 +411,15 @@
   white-space: nowrap;
   cursor: pointer;
   flex-shrink: 0;
+}
+
+/* 페이지 시작 탭(1, 5, 9번째...): 스냅 기준점 + 앞 페이지의 잔상이 안 보이게 페이지 간격 확보 */
+.gadget-tab:nth-child(4n + 1) {
+  scroll-snap-align: start;
+}
+
+.gadget-tab:nth-child(4n + 1):not(:first-child) {
+  margin-left: 24px; /* 좌우 패딩(12px×2)만큼 밀어서 첫 화면에서 완전히 숨김 */
 }
 
 .gadget-tab.active {
@@ -684,6 +708,130 @@
   display: flex;
   justify-content: space-between; /* 왼쪽 재생 ↔ 오른쪽 메트로놈 (사용자 결정) */
   align-items: center;
+}
+
+/* ── Chords 가젯: 코드 진행 슬라이드 타임라인 ── */
+.chords-gadget {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  align-self: stretch; /* 패널의 세로 중앙 정렬 대신 영역 전체 사용 */
+  overflow: hidden;
+}
+
+.chords-gadget.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+/* KEY 표시 (임시 위치 — 오른쪽 위 구석) */
+.chords-key {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 2;
+  color: var(--neon);
+  opacity: 0.7;
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
+/* 시간 기준선: 화면 고정 가로선 (스크린샷 스타일 — 코드 눈금/플레이헤드 점이 이 위에) */
+.chords-baseline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 16px;
+  height: 1.5px;
+  background: var(--text-dim);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* 코드 스트립: 왼쪽 원점이 화면 중앙(플레이헤드) — 재생 위치만큼 translateX로 이동 */
+.chords-strip {
+  position: absolute;
+  left: 50%;
+  top: 18px;
+  bottom: 10px;
+  width: 0; /* 자식 아이템은 절대 배치라 폭 불필요 */
+  transition: transform 90ms linear; /* 엔진 위치 갱신(50ms 스텝) 사이를 매끈하게 보간 */
+}
+
+/* 코드 아이템: 박스 없이 시작 지점에 이름 + 운지 그림 (사용자 스크린샷 스타일) */
+.chord-item {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start; /* 시작 지점 기준 왼쪽 정렬 */
+  gap: 1px;
+  padding: 0 2px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* 코드 시작 눈금: 기준선 위의 작은 점 (스트립과 함께 흐름) */
+.chord-item::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 3px; /* 스트립 bottom(10px) 기준 → 기준선(16px) 위 정중앙 */
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.8;
+}
+
+.chord-item .chord-name {
+  font-size: 15px;
+  font-weight: bold;
+  line-height: 1.1;
+}
+
+.chord-item .chord-diagram {
+  height: 56px;
+  flex-shrink: 0;
+}
+
+.chord-item.active {
+  color: var(--neon);
+  filter: var(--glow-text);
+}
+
+/* 중앙 고정 플레이헤드: 가는 세로선 + 기준선 위의 점 */
+.chords-playhead {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  bottom: 16px;
+  width: 1.5px;
+  margin-left: -0.75px;
+  background: #fff;
+  opacity: 0.9;
+  box-shadow: 0 0 6px #fff, 0 0 14px var(--neon);
+  pointer-events: none; /* 아래 코드 아이템 탭을 가리지 않게 */
+}
+
+.chords-playhead::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: -3.5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 6px #fff, 0 0 12px var(--neon);
 }
 
 /* 메트로놈 토글 (메트로놈 모양 아이콘) — 켜지면 네온 발광으로 상태 표시 */

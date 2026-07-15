@@ -266,6 +266,11 @@ export class Player {
     return this.stretchNode?.inputTime ?? 0
   }
 
+  // 스트레치 엔진 출력 지연(실시간 초) — 화면 표시를 "지금 들리는 소리"에 맞출 때 보정용
+  get playbackLatency(): number {
+    return this.stretchLatency
+  }
+
   // 템포 배율 (1 = 원속도, 0.5 = 절반 속도·음정 유지)
   get tempo(): number {
     return this._tempo
