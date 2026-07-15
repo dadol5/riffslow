@@ -33,15 +33,22 @@ export default defineConfig(({ command }) => ({
       workbox: {
         // ffmpeg wasm(~31MB)까지 오프라인 캐시에 포함
         globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm}'],
+        // onnxruntime wasm은 제외 — 런타임에 CDN에서 받음(stems.ts wasmPaths), 스템 분리를
+        // 안 쓰는 사용자까지 26MB를 미리 받게 하지 않기 위함
+        globIgnores: ['**/ort-wasm*'],
         maximumFileSizeToCacheInBytes: 40 * 1024 * 1024,
       },
     }),
   ],
   server: {
     host: true, // 같은 WiFi의 다른 기기(아이폰 등)에서 접속 허용
+    // ⚠️ COOP/COEP 헤더(SharedArrayBuffer용)를 넣었더니 iOS Safari가 페이지를
+    // 반복 크래시시킴(2026-07-13 실기기 확인 — "문제가 반복적으로 발생") → 제거.
+    // 스템 분리는 단일 스레드 WASM/WebGPU로 동작 (stems.ts에서 자동 조정)
   },
   optimizeDeps: {
     // ffmpeg.wasm은 내부에서 웹워커를 쓰므로 Vite 사전 번들링에서 제외 (공식 권장 설정)
-    exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
+    // onnxruntime-web도 자체 wasm 로딩 로직이 있어 제외
+    exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util', 'onnxruntime-web'],
   },
 }))

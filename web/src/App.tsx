@@ -394,6 +394,63 @@ function App() {
     player.metronome = next
   }
 
+  // ── 스템 분리 스파이크 (실험): 첫 60초만 분리해 소요시간/생존 여부 측정 ──
+  // 사용자 방침: 온디맨드(버튼)로만 실행. 성공 시 보컬 스템 8초를 들려줘 분리 품질 확인
+  const [stemRunning, setStemRunning] = useState(false)
+  const handleRunStems = async () => {
+    if (!player.audioBuffer || stemRunning) return
+    setStemRunning(true)
+    player.pause()
+    setIsPlaying(false)
+    const t0 = performance.now()
+    try {
+      console.log('◆ 스템 분리 스파이크 시작 (첫 30초 — 타당성 측정)')
+      // 멀티스레드 WASM 가능 여부 (false면 COOP/COEP 헤더 미적용 — dev 서버 재시작 필요)
+      console.log(
+        `◆ 환경: crossOriginIsolated=${crossOriginIsolated}, 코어 ${navigator.hardwareConcurrency}, WebGPU ${'gpu' in navigator ? '지원' : '미지원'}`,
+      )
+      const { separateStems } = await import('./audio/stems')
+      const { stems, seconds, sampleRate } = await separateStems(player.audioBuffer, 30, (m) =>
+        console.log(`◆ ${m}`),
+      )
+      const took = (performance.now() - t0) / 1000
+
+      // 스템별 대략적 에너지 (분리가 실제로 됐는지 수치 확인용 — 성긴 샘플링 RMS)
+      const roughRms = (x: Float32Array) => {
+        let sum = 0
+        let n = 0
+        for (let i = 0; i < x.length; i += 97) {
+          sum += x[i] * x[i]
+          n++
+        }
+        return Math.sqrt(sum / Math.max(1, n)).toFixed(3)
+      }
+      console.log(
+        `◆ 분리 완료: ${took.toFixed(0)}초 소요 (${seconds.toFixed(0)}초 분량, 실시간 배율 ${(seconds / took).toFixed(2)}x)`,
+      )
+      console.log(
+        `◆ 스템 RMS — vocals ${roughRms(stems.vocals.left)} / drums ${roughRms(stems.drums.left)} / bass ${roughRms(stems.bass.left)} / other ${roughRms(stems.other.left)}`,
+      )
+
+      // 분리 증거: 보컬 스템만 중간 8초 재생 (보컬만 들리면 성공)
+      player.playPreview(
+        stems.vocals.left,
+        stems.vocals.right,
+        sampleRate,
+        Math.max(0, seconds / 2 - 4),
+        8,
+      )
+      alert(
+        `스템 분리 성공!\n${seconds.toFixed(0)}초 분량 → ${took.toFixed(0)}초 소요\n지금 "보컬 스템만" 8초 재생 중 — 보컬만 들리면 분리가 잘 된 겁니다`,
+      )
+    } catch (err) {
+      console.error('◆ 스템 분리 실패:', err)
+      alert(`스템 분리 실패:\n${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setStemRunning(false)
+    }
+  }
+
   // 루프 상태 변경: 화면 state와 엔진을 항상 함께 갱신
   const syncLoops = (next: Loop[]) => {
     setLoops(next)
@@ -621,6 +678,8 @@ function App() {
         loadingText={loadingText}
         onFileChange={handleFileChange}
         onOpenPlaylist={() => setShowPlaylist(true)}
+        onRunStems={handleRunStems}
+        canRunStems={hasTrack && !stemRunning}
       />
 
       {/* 페이지 스와이프 영역 (손가락 추적) */}

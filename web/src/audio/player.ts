@@ -370,6 +370,37 @@ export class Player {
     }, 1000)
   }
 
+  // 스템 분리 결과 등 임시 버퍼 미리듣기 (실험용) — 기존 컨텍스트/볼륨 경로 재사용
+  // (새 AudioContext는 제스처 밖에서 재생이 막히지만, 이미 살아있는 컨텍스트는 가능)
+  private previewSource: AudioBufferSourceNode | null = null
+
+  playPreview(
+    left: Float32Array,
+    right: Float32Array,
+    sampleRate: number,
+    startSec: number,
+    durSec: number,
+  ): void {
+    if (!this.ctx || !this.gain) return
+    this.pause() // 본 재생과 겹치지 않게
+    try {
+      this.previewSource?.stop()
+    } catch {
+      // 이미 끝난 소스면 무시
+    }
+    const startIdx = Math.floor(startSec * sampleRate)
+    const len = Math.min(Math.floor(durSec * sampleRate), left.length - startIdx)
+    if (len <= 0) return
+    const buf = this.ctx.createBuffer(2, len, sampleRate)
+    buf.getChannelData(0).set(left.subarray(startIdx, startIdx + len))
+    buf.getChannelData(1).set(right.subarray(startIdx, startIdx + len))
+    const src = this.ctx.createBufferSource()
+    src.buffer = buf
+    src.connect(this.gain)
+    src.start()
+    this.previewSource = src
+  }
+
   pause(): void {
     if (!this.playing) return
     this.playing = false // 노드가 없어도(재생성 중) 상태는 확실히 내림 — 재생성 후 오동작 방지

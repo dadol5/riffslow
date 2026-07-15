@@ -88,6 +88,20 @@
   animation-delay: 0.05s; /* 순차 전개 느낌 */
 }
 
+.note-fan.fan-3 {
+  /* 195° 방향 (왼쪽-위 대각) — 스템 분리 (실험) */
+  left: calc(50% - 101px - 23px);
+  top: calc(50% - 27px - 23px);
+  animation-delay: 0.1s;
+}
+
+.note-fan:disabled {
+  color: var(--text-dim);
+  border-color: var(--text-dim);
+  filter: none;
+  opacity: 0.5;
+}
+
 @keyframes fan-in {
   from {
     opacity: 0;
