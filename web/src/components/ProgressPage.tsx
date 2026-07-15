@@ -94,7 +94,28 @@ function ProgressPage({
           disabled={!canMetro}
           aria-label="메트로놈"
         >
-          ♩
+          {/* 메트로놈 모양: 사다리꼴 몸통 + 템포 눈금 3개 + 대각선 진자 + 받침 */}
+          <svg viewBox="0 0 24 24" className="icon">
+            <g fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">
+              {/* 몸통 (위가 좁은 사다리꼴) */}
+              <path d="M9.6 3.5 h4.8 l3.9 17 h-12.6 z" />
+              {/* 받침 (아랫부분 채움) */}
+              <path d="M6.4 16.8 h11.2 l0.85 3.7 h-12.9 z" fill="currentColor" />
+            </g>
+            {/* 템포 눈금 3개 (왼쪽 위) */}
+            <g stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+              <path d="M9.3 7.2 h2.6" />
+              <path d="M9.7 9.8 h2.6" />
+              <path d="M10.1 12.4 h2.6" />
+            </g>
+            {/* 진자 (몸통을 가로질러 오른쪽 위로 뻗음) */}
+            <path
+              d="M11.8 18.2 L20.6 3.8"
+              stroke="currentColor"
+              strokeWidth="1.9"
+              strokeLinecap="round"
+            />
+          </svg>
         </button>
       </div>
     </>
