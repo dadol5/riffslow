@@ -443,7 +443,10 @@
 /* ── 가젯 패널 (선택된 가젯 표시 영역) ──
    ⚠️ 높이 고정: 어떤 가젯을 선택해도, 페이지를 스와이프해도 하단 영역 크기 불변 (원본 확정) */
 .gadget-panel {
-  height: 132px;
+  /* 홈 화면 PWA(standalone)에선 하단 안전영역(홈바)만큼 패딩이 커지는데,
+     border-box라 132px 고정이면 내용 공간이 그만큼 쪼그라듦 — 높이에 안전영역을 더해
+     내용 공간을 사파리와 동일(118px)하게 유지 */
+  height: calc(132px + env(safe-area-inset-bottom));
   flex-shrink: 0; /* 위 콘텐츠가 커져도 절대 줄어들지 않음 */
   display: flex;
   align-items: center;
