@@ -1,8 +1,9 @@
 // 곡 라이브러리 저장소 — IndexedDB (idb 래퍼 사용)
 //
-// 스토어 2개 분리 구조:
+// 스토어 3개 분리 구조:
 // - 'tracks': 목록용 메타데이터 (제목/길이/곡별 설정) — 가벼움
 // - 'files' : 오디오 원본 Blob — 무거움 (재생할 곡만 개별 로드)
+// - 'stems' : 곡에 붙은 스템 파일들 (PC에서 분리한 WAV 등) — key = 곡 id
 // 분리 이유: 목록 조회 시 모든 곡의 Blob을 메모리에 올리지 않기 위해
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
@@ -30,6 +31,8 @@ export interface TrackSettings {
   chords?: ChordSegment[] | null
   songKey?: string | null // 예: "C minor"
   chordsVer?: number // 분석 로직 버전 — 로직이 개선되면 낮은 버전 데이터는 자동 재분석
+  // 스템 믹서 상태 (스템 이름 → 볼륨 0~1 / 뮤트) — 솔로는 세션 한정이라 저장 안 함
+  stemMix?: Record<string, { volume: number; muted: boolean }>
 }
 
 export interface TrackMeta {
@@ -38,6 +41,14 @@ export interface TrackMeta {
   duration: number // 곡 길이 (초)
   addedAt: number // 추가 시각 (타임스탬프)
   settings: TrackSettings
+  // 붙어있는 스템 이름 목록 (없으면 스템 없는 곡) — Blob 로드 없이 목록/배지 표시용
+  stemNames?: string[]
+}
+
+// 곡에 붙는 스템 1개 (예: name='vocals', blob=분리된 WAV)
+export interface StemFile {
+  name: string
+  blob: Blob
 }
 
 export function defaultSettings(): TrackSettings {
@@ -55,6 +66,7 @@ export function defaultSettings(): TrackSettings {
 interface LibraryDB extends DBSchema {
   tracks: { key: number; value: TrackMeta }
   files: { key: number; value: Blob }
+  stems: { key: number; value: StemFile[] }
 }
 
 // DB 연결은 앱 전체에서 1회만 (이후 재사용)
@@ -62,11 +74,16 @@ let dbPromise: Promise<IDBPDatabase<LibraryDB>> | null = null
 
 function getDB(): Promise<IDBPDatabase<LibraryDB>> {
   if (!dbPromise) {
-    dbPromise = openDB<LibraryDB>('riffslow', 1, {
-      // 최초 생성(또는 버전 업) 시 스토어 구성
-      upgrade(db) {
-        db.createObjectStore('tracks', { keyPath: 'id', autoIncrement: true })
-        db.createObjectStore('files')
+    dbPromise = openDB<LibraryDB>('riffslow', 2, {
+      // 버전 업 시 기존 데이터는 유지하고 없는 스토어만 추가
+      upgrade(db, oldVersion) {
+        if (oldVersion < 1) {
+          db.createObjectStore('tracks', { keyPath: 'id', autoIncrement: true })
+          db.createObjectStore('files')
+        }
+        if (oldVersion < 2) {
+          db.createObjectStore('stems') // v2: 스템 파일 (key = 곡 id)
+        }
       },
     })
   }
@@ -111,11 +128,27 @@ export async function getTrackFile(id: number): Promise<Blob | undefined> {
   return db.get('files', id)
 }
 
-// 곡 삭제: 메타 + 파일 + 설정 모두 확실하게 제거 ⭐ (이 프로젝트의 존재 이유)
+// 곡 삭제: 메타 + 파일 + 스템 + 설정 모두 확실하게 제거 ⭐ (이 프로젝트의 존재 이유)
 export async function deleteTrack(id: number): Promise<void> {
   const db = await getDB()
   await db.delete('tracks', id)
   await db.delete('files', id)
+  await db.delete('stems', id)
+}
+
+// 스템 저장: 곡에 붙임 (기존 스템은 통째로 교체) + 메타에 이름 목록 기록
+export async function saveStems(id: number, stems: StemFile[]): Promise<void> {
+  const db = await getDB()
+  const meta = await db.get('tracks', id)
+  if (!meta) throw new Error('스템을 붙일 곡을 찾을 수 없어요')
+  await db.put('stems', stems, id)
+  await db.put('tracks', { ...meta, stemNames: stems.map((s) => s.name) })
+}
+
+// 곡의 스템 목록 조회 (없으면 undefined)
+export async function getStems(id: number): Promise<StemFile[] | undefined> {
+  const db = await getDB()
+  return db.get('stems', id)
 }
 
 // 곡별 설정 갱신 (자동 저장에서 호출)

@@ -26,8 +26,9 @@ declare module 'signalsmith-stretch' {
     schedule(options: StretchScheduleOptions): Promise<StretchScheduleOptions>
     /** inputTime 갱신 주기(초) 설정 + 갱신될 때마다 호출되는 콜백 등록 */
     setUpdateInterval(seconds: number, callback?: (inputTime: number) => void): Promise<void>
-    /** 채널별 오디오 샘플(Float32Array)을 재생 버퍼 끝에 추가. 버퍼 끝 시각(초)을 반환 */
-    addBuffers(channelBuffers: Float32Array[]): Promise<number>
+    /** 채널별 오디오 샘플(Float32Array)을 재생 버퍼 끝에 추가. 버퍼 끝 시각(초)을 반환
+     *  transfer를 주면 소유권 이전(zero-copy) — 대용량(스템 다채널) 복사 방지, 넘긴 배열은 이후 사용 불가 */
+    addBuffers(channelBuffers: Float32Array[], transfer?: ArrayBuffer[]): Promise<number>
     /** 재생 버퍼 전체(인자 없음) 또는 지정 시각 이전 구간을 제거 */
     dropBuffers(toSeconds?: number): Promise<{ start: number; end: number }>
     /** 처리/출력 지연시간 합(초) */

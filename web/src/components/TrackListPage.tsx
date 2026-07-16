@@ -25,6 +25,10 @@ function TrackListPage({ tracks, currentId, onSelect, onDelete }: TrackListPageP
           {/* 현재 트랙 인디케이터 (설계서: 재생 중 곡 좌측 ▶) */}
           <span className="track-indicator">{t.id === currentId ? '▶' : ''}</span>
           <span className="track-name">{t.name}</span>
+          {/* 스템 붙은 곡 표시 배지 */}
+          {t.stemNames != null && t.stemNames.length > 0 && (
+            <span className="track-stem-badge">STEM</span>
+          )}
           <span className="track-duration">{formatTime(t.duration)}</span>
           <button className="track-delete" onClick={(e) => onDelete(e, t)}>
             삭제

@@ -12,14 +12,19 @@ import BpmGadget from './components/gadgets/BpmGadget'
 import ChordsGadget from './components/gadgets/ChordsGadget'
 import { analyzeBpm } from './audio/bpm'
 import { analyzeChords, type ChordSegment } from './audio/chords'
+import { guessStemName, mixStemsToWav, stemSetTitle, STEM_ORDER } from './audio/stems'
+import MixerSheet from './components/MixerSheet'
 import {
   addTrack,
   deleteTrack,
   getAllTracks,
+  getStems,
   getTrack,
   getTrackFile,
+  saveStems,
   updateSettings,
   type Loop,
+  type StemFile,
   type TrackMeta,
 } from './db/library'
 import './App.css'
@@ -57,7 +62,12 @@ function App() {
   const [showPlaylist, setShowPlaylist] = useState(false) // 곡 목록 시트(레이어) 열림 여부
 
   // 가젯 탭 선택 = 패널 전환 (Playlist는 상단 음표 메뉴로 이동 — 사용자 결정)
+  // Stems 탭은 패널 전환 없이 바로 믹서 시트를 띄움 (사용자 결정)
   const handleGadgetSelect = (id: GadgetId) => {
+    if (id === 'stems') {
+      setShowMixer(true)
+      return
+    }
     setActiveGadget(id)
   }
   const [volume, setVolume] = useState(100) // 마스터 볼륨 % (전역 설정)
@@ -70,6 +80,47 @@ function App() {
   const [metroOn, setMetroOn] = useState(false) // 메트로놈 on/off (세션 한정 — 저장 안 함)
   const [bpmLocked, setBpmLocked] = useState(true) // BPM 자물쇠 (잠김 = 조절 불가 + 속도 반영 표시)
   const [metroVolume, setMetroVolume] = useState(100) // 메트로놈 볼륨 % (음원과 개별)
+
+  // ── 스템 믹서: 볼륨/뮤트는 곡별 저장(stemMix), 솔로는 세션 한정 ──
+  // 현재 곡에 붙은 스템 이름 목록 (목록 메타에서 파생 — 스템 세트 추가 시 자동 반영)
+  const currentStemNames = tracks.find((t) => t.id === currentId)?.stemNames
+  const [showMixer, setShowMixer] = useState(false)
+  const [stemMix, setStemMix] = useState<Record<string, { volume: number; muted: boolean }>>({})
+  const [soloStems, setSoloStems] = useState<Set<string>>(new Set())
+
+  const handleStemVolume = (name: string, volume: number) => {
+    setStemMix((m) => ({ ...m, [name]: { volume, muted: m[name]?.muted ?? false } }))
+  }
+  const handleStemMute = (name: string) => {
+    setStemMix((m) => ({
+      ...m,
+      [name]: { volume: m[name]?.volume ?? 1, muted: !(m[name]?.muted ?? false) },
+    }))
+  }
+  const handleStemSolo = (name: string) => {
+    setSoloStems((s) => {
+      const next = new Set(s)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  // 믹서 상태 → 엔진 반영 (솔로가 있으면 솔로만 들림, 없으면 뮤트 제외 전부)
+  // 반영 = 스템 재합성(무거움)이라 연속 변경(페이더 드래그)은 250ms 디바운스로 마지막 값만
+  useEffect(() => {
+    if (!currentStemNames || currentStemNames.length === 0) return
+    const gains = currentStemNames.map((name) => {
+      const m = stemMix[name]
+      const vol = m?.volume ?? 1
+      const muted = m?.muted ?? false
+      return soloStems.size > 0 ? (soloStems.has(name) ? vol : 0) : muted ? 0 : vol
+    })
+    const timer = setTimeout(() => {
+      void player.applyStemGains(gains)
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [player, currentStemNames, stemMix, soloStems])
 
   // BPM 그리드가 바뀔 때마다 엔진에 반영 (곡 교체/분석 완료/×2·÷2 교정 모두 포함)
   useEffect(() => {
@@ -243,10 +294,11 @@ function App() {
         chords,
         songKey,
         chordsVer,
+        stemMix,
       })
     }, 300)
     return () => clearTimeout(timer) // 300ms 안에 또 바뀌면 이전 예약 취소 (디바운스)
-  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset, chords, songKey, chordsVer])
+  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset, chords, songKey, chordsVer, stemMix])
 
   // 곡이 끝까지 재생되면 엔진이 알려줌 → 화면 상태 되돌리기
   useEffect(() => {
@@ -271,56 +323,113 @@ function App() {
     return () => cancelAnimationFrame(rafId)
   }, [isPlaying, player])
 
+  // 새 곡을 엔진에 로드하고 라이브러리에 저장 (일반 곡 / 스템 세트 공용)
+  const registerNewTrack = async (name: string, source: Blob, stems?: StemFile[]) => {
+    setLoadingText('디코딩 중...')
+    // 스템 세트는 스템 재생 엔진으로 (악기별 볼륨 즉시 가능), 일반 곡은 기존 경로
+    const dur =
+      stems && stems.length > 0 ? await player.loadStemTrack(stems) : await player.load(source)
+    setFileName(name)
+    setDuration(dur)
+    setPosition(0)
+    // 곡 단위 설정 초기화 (엔진 쪽 루프/S/E는 load()가 정리함)
+    // 템포도 새 곡은 100%부터 — 이전 곡의 배속이 새 곡 설정으로 저장되는 것 방지
+    setTempo(100)
+    player.tempo = 1
+    setLoops([])
+    setPosMarkers([])
+    setTrackS(null)
+    setTrackE(null)
+    setPitch(0)
+    player.pitchSemitones = 0
+    setBpm(undefined)
+    setBpmOffset(null)
+    setChords(undefined)
+    setSongKey(undefined)
+    setStemMix({})
+    setSoloStems(new Set())
+
+    // 라이브러리에 저장 (동영상은 추출된 오디오만 저장 — 용량 절약 + 다음부턴 추출 생략)
+    const meta = await addTrack(name, source, dur)
+    if (stems && stems.length > 0) await saveStems(meta.id, stems)
+    setCurrentId(meta.id)
+    setTracks(await getAllTracks())
+    console.log(`디코딩 완료: ${name} (길이 ${dur.toFixed(1)}초) — 라이브러리 저장됨`)
+
+    // BPM → 코드/KEY 순차 자동 분석 (백그라운드 — 동시에 돌리면 폰 CPU 부담이라 순차로)
+    // BPM 결과가 있으면 코드 경계를 박자에 정렬
+    void runBpmAnalysis(meta.id).then((b) =>
+      runChordAnalysis(meta.id, b ? { bpm: b.bpm, offset: b.offset } : null),
+    )
+  }
+
   // 파일 선택 → 엔진에 로드 + 라이브러리에 저장
+  // 여러 개 선택 = 스템 세트 (사용자 결정: 추가할 때부터 일반 곡과 구분)
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const files = e.target.files ? Array.from(e.target.files) : []
+    if (files.length === 0) return
+    const file = files[0]
+
+    // 스템 세트 확인 (합치면 원곡이 되므로 원곡 파일은 따로 필요 없음)
+    let stemMode = false
+    if (files.length > 1) {
+      stemMode = confirm(
+        `선택한 ${files.length}개 파일을 "스템 세트"(분리된 악기들)로 묶어 한 곡으로 추가할까요?\n\n· 예 = 스템들을 합쳐 한 곡으로 등록 (믹서에서 악기별 조절 예정)\n· 아니오 = 취소 (여러 곡 일괄 추가는 지원하지 않아요 — 한 곡씩 추가해 주세요)`,
+      )
+      if (!stemMode) return
+    }
 
     player.ensureContext() // 제스처 컨텍스트가 살아있을 때(await 이전) 오디오 준비
     setIsPlaying(false)
     setIsLoading(true)
     try {
-      // 동영상이면 먼저 오디오 트랙만 추출 (mov/mp4 등)
-      const isVideo =
-        file.type.startsWith('video/') || /\.(mov|mp4|m4v)$/i.test(file.name)
+      if (stemMode) {
+        // 파일명에서 스템 이름 추측 — 못 알아보거나 겹치면 파일명 그대로 사용
+        const used = new Set<string>()
+        const stems: StemFile[] = files.map((f) => {
+          let name = guessStemName(f.name)
+          if (!name || used.has(name)) {
+            const base = f.name.replace(/\.[^.]+$/, '')
+            name = base
+            let n = 2
+            while (used.has(name)) name = `${base}${n++}`
+          }
+          used.add(name)
+          return { name, blob: f }
+        })
+        // 표준 순서(보컬→드럼→베이스→기타→피아노→나머지)로 정렬
+        stems.sort((a, b) => {
+          const ai = STEM_ORDER.indexOf(a.name)
+          const bi = STEM_ORDER.indexOf(b.name)
+          return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
+        })
 
-      let source: Blob = file
-      if (isVideo) {
-        setLoadingText('동영상에서 오디오 추출 중... (최초 1회는 도구 다운로드로 오래 걸려요)')
-        // 필요할 때만 ffmpeg 모듈 로드 (오디오 파일만 쓰는 동안엔 부담 없음)
-        const { extractAudio } = await import('./audio/extractAudio')
-        source = await extractAudio(file)
+        // 스템 합산 = 원곡 복원 → 합본이 이 곡의 재생 소스가 됨
+        setLoadingText(`스템 합치는 중... (0/${stems.length})`)
+        const { blob: mixed } = await mixStemsToWav(
+          stems.map((s) => s.blob),
+          (done, total) => setLoadingText(`스템 합치는 중... (${done}/${total})`),
+        )
+        await registerNewTrack(stemSetTitle(files.map((f) => f.name)), mixed, stems)
+        console.log(`스템 세트 등록: ${stems.map((s) => s.name).join(', ')}`)
+      } else {
+        // 동영상이면 먼저 오디오 트랙만 추출 (mov/mp4 등)
+        const isVideo =
+          file.type.startsWith('video/') || /\.(mov|mp4|m4v)$/i.test(file.name)
+
+        let source: Blob = file
+        if (isVideo) {
+          setLoadingText('동영상에서 오디오 추출 중... (최초 1회는 도구 다운로드로 오래 걸려요)')
+          // 필요할 때만 ffmpeg 모듈 로드 (오디오 파일만 쓰는 동안엔 부담 없음)
+          const { extractAudio } = await import('./audio/extractAudio')
+          source = await extractAudio(file)
+        }
+
+        await registerNewTrack(file.name, source)
       }
-
-      setLoadingText('디코딩 중...')
-      const dur = await player.load(source)
-      setFileName(file.name)
-      setDuration(dur)
-      setPosition(0)
-      // 곡 단위 설정 초기화 (엔진 쪽 루프/S/E는 load()가 정리함)
-      setLoops([])
-      setPosMarkers([])
-      setTrackS(null)
-      setTrackE(null)
-      setPitch(0)
-      player.pitchSemitones = 0
-      setBpm(undefined)
-      setBpmOffset(null)
-      setChords(undefined)
-      setSongKey(undefined)
-
-      // 라이브러리에 저장 (동영상은 추출된 오디오만 저장 — 용량 절약 + 다음부턴 추출 생략)
-      const meta = await addTrack(file.name, source, dur)
-      setCurrentId(meta.id)
-      setTracks(await getAllTracks())
-      console.log(`디코딩 완료: ${file.name} (길이 ${dur.toFixed(1)}초) — 라이브러리 저장됨`)
-
-      // BPM → 코드/KEY 순차 자동 분석 (백그라운드 — 동시에 돌리면 폰 CPU 부담이라 순차로)
-      // BPM 결과가 있으면 코드 경계를 박자에 정렬
-      void runBpmAnalysis(meta.id).then((b) =>
-        runChordAnalysis(meta.id, b ? { bpm: b.bpm, offset: b.offset } : null),
-      )
     } catch (err) {
+      // 다른 곡 로드가 시작돼 취소된 경우는 정상 흐름 — 조용히 넘어감
+      if (err instanceof Error && err.message.startsWith('로드 취소')) return
       // 디버깅용: 파일 정보와 에러 내용을 함께 출력
       console.error('오디오 디코딩 실패:', err)
       console.error(
@@ -394,62 +503,9 @@ function App() {
     player.metronome = next
   }
 
-  // ── 스템 분리 스파이크 (실험): 첫 60초만 분리해 소요시간/생존 여부 측정 ──
-  // 사용자 방침: 온디맨드(버튼)로만 실행. 성공 시 보컬 스템 8초를 들려줘 분리 품질 확인
-  const [stemRunning, setStemRunning] = useState(false)
-  const handleRunStems = async () => {
-    if (!player.audioBuffer || stemRunning) return
-    setStemRunning(true)
-    player.pause()
-    setIsPlaying(false)
-    const t0 = performance.now()
-    try {
-      console.log('◆ 스템 분리 스파이크 시작 (첫 30초 — 타당성 측정)')
-      // 멀티스레드 WASM 가능 여부 (false면 COOP/COEP 헤더 미적용 — dev 서버 재시작 필요)
-      console.log(
-        `◆ 환경: crossOriginIsolated=${crossOriginIsolated}, 코어 ${navigator.hardwareConcurrency}, WebGPU ${'gpu' in navigator ? '지원' : '미지원'}`,
-      )
-      const { separateStems } = await import('./audio/stems')
-      const { stems, seconds, sampleRate } = await separateStems(player.audioBuffer, 30, (m) =>
-        console.log(`◆ ${m}`),
-      )
-      const took = (performance.now() - t0) / 1000
-
-      // 스템별 대략적 에너지 (분리가 실제로 됐는지 수치 확인용 — 성긴 샘플링 RMS)
-      const roughRms = (x: Float32Array) => {
-        let sum = 0
-        let n = 0
-        for (let i = 0; i < x.length; i += 97) {
-          sum += x[i] * x[i]
-          n++
-        }
-        return Math.sqrt(sum / Math.max(1, n)).toFixed(3)
-      }
-      console.log(
-        `◆ 분리 완료: ${took.toFixed(0)}초 소요 (${seconds.toFixed(0)}초 분량, 실시간 배율 ${(seconds / took).toFixed(2)}x)`,
-      )
-      console.log(
-        `◆ 스템 RMS — vocals ${roughRms(stems.vocals.left)} / drums ${roughRms(stems.drums.left)} / bass ${roughRms(stems.bass.left)} / other ${roughRms(stems.other.left)}`,
-      )
-
-      // 분리 증거: 보컬 스템만 중간 8초 재생 (보컬만 들리면 성공)
-      player.playPreview(
-        stems.vocals.left,
-        stems.vocals.right,
-        sampleRate,
-        Math.max(0, seconds / 2 - 4),
-        8,
-      )
-      alert(
-        `스템 분리 성공!\n${seconds.toFixed(0)}초 분량 → ${took.toFixed(0)}초 소요\n지금 "보컬 스템만" 8초 재생 중 — 보컬만 들리면 분리가 잘 된 겁니다`,
-      )
-    } catch (err) {
-      console.error('◆ 스템 분리 실패:', err)
-      alert(`스템 분리 실패:\n${err instanceof Error ? err.message : String(err)}`)
-    } finally {
-      setStemRunning(false)
-    }
-  }
+  // (앱 내 스템 추출 UI는 제거됨 — 추출은 PC의 UVR로 하는 게 확정 흐름.
+  //  엔진 코드는 src/audio/stems.ts의 separateStems/encodeWavStereo로 남아 있어
+  //  추후 SET-01 설정 화면에서 백업 기능으로 부활 가능)
 
   // 루프 상태 변경: 화면 state와 엔진을 항상 함께 갱신
   const syncLoops = (next: Loop[]) => {
@@ -551,21 +607,37 @@ function App() {
 
   // 곡 로드 + 저장된 설정 복원 (autoPlay: 목록 탭 = 재생 / 앱 시작 복원 = 로드만)
   const loadTrack = async (meta: TrackMeta, autoPlay: boolean) => {
+    if (isLoading) return // 로드 중 다른 곡 선택 무시 (겹친 로드가 상태를 뒤섞는 것 방지)
     setIsPlaying(false)
     setIsLoading(true)
     setLoadingText('불러오는 중...')
     try {
-      const blob = await getTrackFile(meta.id)
-      if (!blob) throw new Error('저장된 파일을 찾을 수 없어요')
+      // 최신 메타 (목록의 메타는 오래됐을 수 있음 — 설정/스템 유무 판단에 사용)
+      const fresh = (await getTrack(meta.id)) ?? meta
 
-      const dur = await player.load(blob)
+      // 스템 곡이면 스템 재생 엔진으로 (악기별 볼륨), 아니면 원본 파일로
+      let dur: number
+      const stems = fresh.stemNames?.length ? await getStems(meta.id) : undefined
+      if (stems && stems.length > 0) {
+        // 저장된 믹서 상태를 초기 게인으로 넘김 — 로드 직후 불필요한 재합성 방지
+        const savedMix = fresh.settings.stemMix ?? {}
+        const gains = stems.map((st) => {
+          const m = savedMix[st.name]
+          return m?.muted ? 0 : (m?.volume ?? 1)
+        })
+        dur = await player.loadStemTrack(stems, gains)
+      } else {
+        const blob = await getTrackFile(meta.id)
+        if (!blob) throw new Error('저장된 파일을 찾을 수 없어요')
+        dur = await player.load(blob)
+      }
       setFileName(meta.name)
       setDuration(dur)
       setPosition(0)
       setCurrentId(meta.id)
 
-      // 저장된 곡별 설정 복원 (DB에서 최신값 다시 읽음 — 목록의 메타는 오래됐을 수 있음)
-      const s = ((await getTrack(meta.id)) ?? meta).settings
+      // 저장된 곡별 설정 복원
+      const s = fresh.settings
       setTempo(s.tempo)
       player.tempo = s.tempo / 100
       setPitch(s.pitch ?? 0) // 구버전 저장 데이터엔 pitch가 없을 수 있음
@@ -593,6 +665,9 @@ function App() {
       setSongKey(s.songKey)
       setChordsVer(s.chordsVer ?? 1)
       setChordsAnalyzing(false)
+      // 스템 믹서 복원 (볼륨/뮤트는 곡별 저장, 솔로는 세션 한정이라 초기화)
+      setStemMix(s.stemMix ?? {})
+      setSoloStems(new Set())
       if (s.chords != null) {
         console.log(`저장된 코드 복원: KEY = ${s.songKey}, 구간 ${s.chords.length}개`)
       }
@@ -618,6 +693,8 @@ function App() {
         setIsPlaying(player.isPlaying)
       }
     } catch (err) {
+      // 다른 곡 로드가 시작돼 취소된 경우는 정상 흐름 — 조용히 넘어감
+      if (err instanceof Error && err.message.startsWith('로드 취소')) return
       console.error('곡 불러오기 실패:', err)
       alert('곡을 불러오지 못했어요.')
     } finally {
@@ -678,8 +755,6 @@ function App() {
         loadingText={loadingText}
         onFileChange={handleFileChange}
         onOpenPlaylist={() => setShowPlaylist(true)}
-        onRunStems={handleRunStems}
-        canRunStems={hasTrack && !stemRunning}
       />
 
       {/* 페이지 스와이프 영역 (손가락 추적) */}
@@ -748,7 +823,11 @@ function App() {
       </div>
 
       {/* 가젯 탭 바 + 선택된 가젯 패널 (모든 페이지 공통 — COM-01) */}
-      <GadgetBar active={activeGadget} onSelect={handleGadgetSelect} />
+      <GadgetBar
+        active={activeGadget}
+        showStems={currentStemNames != null && currentStemNames.length > 0}
+        onSelect={handleGadgetSelect}
+      />
       <div className="gadget-panel">
         {activeGadget === 'volume' && (
           <VolumeGadget
@@ -785,6 +864,7 @@ function App() {
             analyzing={chordsAnalyzing}
             chords={chords}
             songKey={songKey}
+            duration={duration}
             // 재생 중엔 엔진 출력 지연만큼 앞서가는 위치를 "지금 들리는 소리" 기준으로 보정
             position={
               isPlaying
@@ -831,6 +911,20 @@ function App() {
           </div>
         </>
       )}
+
+      {/* 스템 믹서 시트 (레이어) — 스템 곡에서만 */}
+      {showMixer && currentStemNames != null && currentStemNames.length > 0 && (
+        <MixerSheet
+          names={currentStemNames}
+          mix={stemMix}
+          solos={soloStems}
+          onVolume={handleStemVolume}
+          onToggleMute={handleStemMute}
+          onToggleSolo={handleStemSolo}
+          onClose={() => setShowMixer(false)}
+        />
+      )}
+
     </div>
   )
 }

@@ -88,13 +88,6 @@
   animation-delay: 0.05s; /* 순차 전개 느낌 */
 }
 
-.note-fan.fan-3 {
-  /* 195° 방향 (왼쪽-위 대각) — 스템 분리 (실험) */
-  left: calc(50% - 101px - 23px);
-  top: calc(50% - 27px - 23px);
-  animation-delay: 0.1s;
-}
-
 .note-fan:disabled {
   color: var(--text-dim);
   border-color: var(--text-dim);
@@ -731,6 +724,152 @@
   height: 100%;
   align-self: stretch; /* 패널의 세로 중앙 정렬 대신 영역 전체 사용 */
   overflow: hidden;
+  touch-action: none; /* 좌우 드래그 탐색 — 브라우저 제스처에 뺏기지 않게 */
+}
+
+/* 드래그 탐색 중엔 보간 없이 손가락에 1:1로 붙임 */
+.chords-gadget.dragging .chords-strip {
+  transition: none;
+}
+
+/* Playlist 행의 스템 배지 */
+.track-stem-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--neon);
+  border-radius: 6px;
+  color: var(--neon);
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+
+/* ── 스템 믹서 시트: 악기별 세로 페이더 (Playlist와 같은 바텀 시트 패턴) ── */
+.mixer-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.6);
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  animation: slide-up 0.25s ease;
+}
+
+.mixer-strips {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 4px 4px;
+}
+
+/* 한 줄 = [악기 아이콘(뮤트)] [가로 페이더] [%] [솔로] */
+.mixer-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 소리 안 나는 스템(뮤트/솔로 제외)은 통째로 어둡게 */
+.mixer-strip.silent {
+  opacity: 0.4;
+}
+
+.mixer-icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--neon);
+  cursor: pointer;
+}
+
+.mixer-icon .icon {
+  width: 26px;
+  height: 26px;
+  filter: var(--glow-text);
+}
+
+.mixer-icon.muted {
+  color: var(--text-dim);
+}
+
+.mixer-icon.muted .icon {
+  filter: none;
+}
+
+.mixer-solo {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  background: none;
+  border: 1px solid var(--text-dim);
+  border-radius: 50%;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.mixer-solo.on {
+  border-color: var(--neon);
+  color: var(--neon);
+  filter: var(--glow-text);
+}
+
+/* 가로 페이더: 트랙(어두운 홈) + 채움(네온) — 세로로 두껍게 잡아 터치 영역 확보 */
+.mixer-fader {
+  position: relative;
+  flex: 1;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  touch-action: none; /* 드래그를 브라우저 제스처에 뺏기지 않게 */
+  cursor: pointer;
+}
+
+.mixer-fader::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mixer-fader-fill {
+  position: absolute;
+  left: 0;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--neon);
+  box-shadow: 0 0 8px var(--neon);
+  pointer-events: none;
+}
+
+.mixer-vol {
+  flex-shrink: 0;
+  min-width: 34px;
+  text-align: right;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: 'DSEG7-Classic', monospace;
+}
+
+.mixer-hint {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding-bottom: 2px;
 }
 
 .chords-gadget.empty {

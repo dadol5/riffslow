@@ -9,8 +9,6 @@ interface TopBarProps {
   loadingText: string
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   onOpenPlaylist: () => void // 음표 메뉴에서 Playlist 선택 시 곡 목록 시트 열기
-  onRunStems: () => void // 스템 분리 (실험 스파이크 — 온디맨드 실행이 사용자 방침)
-  canRunStems: boolean // 곡이 로드돼 있고 분리가 진행 중이 아닐 때만
 }
 
 function TopBar({
@@ -20,8 +18,6 @@ function TopBar({
   loadingText,
   onFileChange,
   onOpenPlaylist,
-  onRunStems,
-  canRunStems,
 }: TopBarProps) {
   // 음표 버튼 메뉴 열림 여부 (원본의 방사형 메뉴를 단순 2버튼 메뉴로 재현 — 사용자 결정)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -106,27 +102,6 @@ function TopBar({
                 </g>
               </svg>
             </button>
-            {/* 스템 분리 (실험) — 믹서 모양 아이콘 */}
-            <button
-              className="icon-btn note-fan fan-3"
-              aria-label="스템 분리 (실험)"
-              disabled={!canRunStems}
-              onClick={() => {
-                setMenuOpen(false)
-                onRunStems()
-              }}
-            >
-              <svg viewBox="0 0 24 24" className="icon">
-                {/* 세로 슬라이더 3개 (믹서) */}
-                <g stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-                  <path d="M6 4 V20 M12 4 V20 M18 4 V20" fill="none" />
-                  <circle cx="6" cy="9" r="2" fill="var(--bg)" />
-                  <circle cx="12" cy="15" r="2" fill="var(--bg)" />
-                  <circle cx="18" cy="7" r="2" fill="var(--bg)" />
-                </g>
-              </svg>
-            </button>
-
             <label className="icon-btn note-fan fan-2" aria-label="파일추가">
               <svg viewBox="0 0 24 24" className="icon">
                 {/* 플러스 모양 (파일 추가) */}
@@ -140,7 +115,8 @@ function TopBar({
               </svg>
               <input
                 type="file"
-                accept="audio/*,video/*,.mp3,.m4a,.wav,.mp4,.mov"
+                multiple
+                accept="audio/*,video/*,.mp3,.m4a,.wav,.flac,.ogg,.mp4,.mov"
                 onChange={(e) => {
                   setMenuOpen(false)
                   onFileChange(e)

@@ -79,6 +79,27 @@ export class Player {
   // 파이프라인 재생성 중복 실행 방지
   private rebuilding = false
 
+  // ── 스템 모드: 스템을 메모리에 보관하고, 볼륨이 바뀌면 게인을 반영해 스테레오로
+  // 미리 합친 뒤 엔진 재생 버퍼를 통째로 교체하는 방식 ──
+  // (스템을 다채널 노드로 실시간 처리하는 방식은 아이폰 CPU가 못 버텨 지직거림 — 2026-07-16 실기기 확인.
+  //  이 방식은 엔진 부하/음질이 일반 곡과 완전히 동일하고, 볼륨 반영만 약간(1초 안팎) 늦음)
+  private stemData: { name: string; left: Int16Array; right: Int16Array }[] | null = null // Int16 = 메모리 절반
+  private stemGains: number[] = [] // 현재 적용된 스템 게인 (0~1, stemData 순서)
+  private remixToken = 0 // 연속 볼륨 변경 시 마지막 요청만 반영
+
+  // ── 로드/버퍼 교체 경합 방지 ──
+  // 곡 로드는 수 초 걸릴 수 있어(디코딩·합성) 그 사이 다른 곡을 선택하면 두 로드가 겹침
+  // → 세대(loadSeq)가 다르면 늦게 끝난 쪽을 폐기 + 노드 버퍼 교체는 직렬화(끼어들기 금지)
+  private loadSeq = 0
+  private nodeOps: Promise<unknown> = Promise.resolve()
+
+  // 노드 버퍼 교체(drop→schedule→addBuffers)가 서로 끼어들지 못하게 순서대로 실행
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.nodeOps.then(fn)
+    this.nodeOps = run.catch(() => {}) // 앞 작업이 실패해도 다음 작업은 진행
+    return run
+  }
+
   // ── 메트로놈: BPM 그리드에 맞춰 클릭음을 음악 위에 얹음 ──
   private metroOn = false
   private metroBpm: number | null = null // null = 그리드 없음 (분석 실패/미분석)
@@ -215,37 +236,202 @@ export class Player {
     return this.stretchNodeReady
   }
 
+  // 스템들을 게인 반영해 스테레오로 합성 (긴 곡도 화면이 멈추지 않게 조각 단위로 양보하며 처리)
+  // stems를 인자로 받는 이유: 합성 도중 다른 곡이 로드돼 this.stemData가 바뀌어도 안전하게
+  private async buildStemMix(
+    stems: { left: Int16Array; right: Int16Array }[],
+    gains: number[],
+  ): Promise<{ left: Float32Array<ArrayBuffer>; right: Float32Array<ArrayBuffer> }> {
+    if (stems.length === 0) throw new Error('스템 데이터가 없어요')
+    const len = stems[0].left.length
+    const left = new Float32Array(len)
+    const right = new Float32Array(len)
+    const CHUNK = 1 << 20 // 약 100만 샘플씩 처리하고 이벤트 루프에 양보
+    for (let start = 0; start < len; start += CHUNK) {
+      const end = Math.min(len, start + CHUNK)
+      for (let i = 0; i < stems.length; i++) {
+        const g = (gains[i] ?? 1) / 32768 // Int16 → float 복원 스케일 겸함
+        if (g === 0) continue // 뮤트된 스템은 통째로 건너뜀
+        const sl = stems[i].left
+        const sr = stems[i].right
+        for (let k = start; k < end; k++) {
+          left[k] += sl[k] * g
+          right[k] += sr[k] * g
+        }
+      }
+      if (end < len) await new Promise((r) => setTimeout(r, 0))
+    }
+    return { left, right }
+  }
+
   // 파일 로드 + 디코딩. 곡 길이(초)를 반환
   // (File 또는 동영상에서 추출된 오디오 Blob 모두 수용)
   async load(file: Blob): Promise<number> {
     this.ensureContext()
-    // ensureContext()가 ctx 생성을 보장하지만, TS는 메서드 너머를 추적 못 하므로 지역 변수로 좁힘
-    const ctx = this.ctx
-    if (!ctx) throw new Error('오디오 컨텍스트 생성 실패')
+    const seq = ++this.loadSeq // 이 로드의 세대 — 새 로드가 시작되면 이건 무효
+    this.remixToken++ // 진행 중이던 스템 재합성도 무효화
 
     this.pause() // 이전 곡 재생 중지
     this.loops = [] // 이전 곡의 루프 초기화 (곡 단위 설정)
     this.setTrackMarkers(null, null) // S/E 마커도 곡 단위라 초기화
 
+    // ensureContext()가 ctx 생성을 보장하지만, TS는 메서드 너머를 추적 못 하므로 지역 변수로 좁힘
+    const ctx = this.ctx
+    if (!ctx) throw new Error('오디오 컨텍스트 생성 실패')
+
     const arrayBuffer = await file.arrayBuffer()
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
-    this.audioBuffer_ = audioBuffer // BPM 분석 등에서 재사용 (곡 교체 시 함께 교체됨)
-    this.duration_ = audioBuffer.duration
     const channels: Float32Array[] = []
     for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
       channels.push(audioBuffer.getChannelData(c))
     }
 
-    const node = await this.getStretchNode()
-    await node.dropBuffers() // 이전 곡 샘플 전부 제거
-    // 재생 위치를 곡 처음으로 리셋 + 직전 템포/피치 설정 유지
-    await node.schedule({ active: false, input: 0, rate: this._tempo, semitones: this._pitch })
-    const bufferEnd = await node.addBuffers(channels)
-    console.log(
-      `곡 로드 완료: ${this.duration_.toFixed(1)}s, 버퍼 끝 ${bufferEnd.toFixed(1)}s, 채널 ${channels.length}, ctx 상태 ${ctx.state}`,
-    )
+    // 상태 반영 + 버퍼 교체는 직렬 구간에서 — 겹친 로드가 서로의 버퍼를 덮어쓰지 못하게
+    return this.runExclusive(async () => {
+      if (seq !== this.loadSeq) throw new Error('로드 취소: 다른 곡 로드가 시작됨')
+      this.stemData = null // 일반 곡 = 스템 상태 해제 (보관하던 스템 데이터도 메모리에서 놓아줌)
+      this.stemGains = []
+      this.audioBuffer_ = audioBuffer // BPM 분석 등에서 재사용 (곡 교체 시 함께 교체됨)
+      this.duration_ = audioBuffer.duration
 
-    return this.duration_
+      const node = await this.getStretchNode()
+      await node.dropBuffers() // 이전 곡 샘플 전부 제거
+      // 재생 위치를 곡 처음으로 리셋 + 직전 템포/피치 설정 유지
+      await node.schedule({ active: false, input: 0, rate: this._tempo, semitones: this._pitch })
+      const bufferEnd = await node.addBuffers(channels)
+      console.log(
+        `곡 로드 완료: ${this.duration_.toFixed(1)}s, 버퍼 끝 ${bufferEnd.toFixed(1)}s, 채널 ${channels.length}, ctx 상태 ${ctx.state}`,
+      )
+      return this.duration_
+    })
+  }
+
+  // 스템 곡 로드: 스템을 Int16으로 보관하고, 초기 게인을 반영한 스테레오 합성본을 재생
+  // BPM/코드 분석용으로 "전부 100%" 합본 AudioBuffer도 보관. 곡 길이(초)를 반환
+  async loadStemTrack(
+    stems: { name: string; blob: Blob }[],
+    initialGains?: number[],
+  ): Promise<number> {
+    if (stems.length === 0) throw new Error('스템 파일이 없어요')
+    this.ensureContext()
+    const seq = ++this.loadSeq // 이 로드의 세대 — 새 로드가 시작되면 이건 무효
+    this.remixToken++ // 진행 중이던 스템 재합성도 무효화
+
+    this.pause()
+    this.loops = []
+    this.setTrackMarkers(null, null)
+
+    const ctx = this.ctx
+    if (!ctx) throw new Error('오디오 컨텍스트 생성 실패')
+
+    // 순차 디코딩 → Int16으로 보관 (Float 대비 메모리 절반 — 아이폰 보호), 원본 버퍼는 바로 GC로
+    const data: { name: string; left: Int16Array; right: Int16Array }[] = []
+    let maxLen = 0
+    for (const stem of stems) {
+      const buf = await ctx.decodeAudioData(await stem.blob.arrayBuffer())
+      if (seq !== this.loadSeq) throw new Error('로드 취소: 다른 곡 로드가 시작됨')
+      const l = buf.getChannelData(0)
+      const r = buf.numberOfChannels > 1 ? buf.getChannelData(1) : l
+      const il = new Int16Array(buf.length)
+      const ir = new Int16Array(buf.length)
+      for (let k = 0; k < buf.length; k++) {
+        il[k] = Math.max(-32768, Math.min(32767, Math.round(l[k] * 32767)))
+        ir[k] = Math.max(-32768, Math.min(32767, Math.round(r[k] * 32767)))
+      }
+      data.push({ name: stem.name, left: il, right: ir })
+      if (buf.length > maxLen) maxLen = buf.length
+    }
+    // 길이 통일 (짧은 스템은 뒤를 무음으로 — 같은 곡에서 분리했으면 거의 동일)
+    for (let i = 0; i < data.length; i++) {
+      if (data[i].left.length < maxLen) {
+        const pl = new Int16Array(maxLen)
+        pl.set(data[i].left)
+        const pr = new Int16Array(maxLen)
+        pr.set(data[i].right)
+        data[i] = { name: data[i].name, left: pl, right: pr }
+      }
+    }
+    const gains = data.map((_, i) => initialGains?.[i] ?? 1)
+
+    // 분석용 합본은 "전부 100%" 기준 (스템 합 = 원곡 — 믹서 게인과 무관해야 분석이 일관됨)
+    const full = await this.buildStemMix(data, data.map(() => 1))
+    const mix = new AudioBuffer({ numberOfChannels: 2, length: maxLen, sampleRate: ctx.sampleRate })
+    mix.copyToChannel(full.left, 0)
+    mix.copyToChannel(full.right, 1)
+
+    // 재생용 합성본: 게인이 전부 100%면 분석용과 동일하니 재활용 (재합성 생략)
+    const allOne = gains.every((g) => g === 1)
+    const playback = allOne ? full : await this.buildStemMix(data, gains)
+
+    // 상태 반영 + 버퍼 교체는 직렬 구간에서 — 겹친 로드가 서로의 버퍼를 덮어쓰지 못하게
+    return this.runExclusive(async () => {
+      if (seq !== this.loadSeq) throw new Error('로드 취소: 다른 곡 로드가 시작됨')
+      this.stemData = data
+      this.stemGains = gains
+      this.audioBuffer_ = mix
+      this.duration_ = maxLen / ctx.sampleRate
+
+      const node = await this.getStretchNode()
+      await node.dropBuffers() // 이전 곡 샘플 전부 제거 (시간축도 0으로 리셋됨)
+      await node.schedule({ active: false, input: 0, rate: this._tempo, semitones: this._pitch })
+      // transfer로 소유권 이전 — 대용량 복사 방지 (audioBuffer_에는 이미 복사돼 있어 안전)
+      const bufferEnd = await node.addBuffers(
+        [playback.left, playback.right],
+        [playback.left.buffer as ArrayBuffer, playback.right.buffer as ArrayBuffer],
+      )
+      console.log(
+        `스템 곡 로드 완료: ${this.duration_.toFixed(1)}s, 버퍼 끝 ${bufferEnd.toFixed(1)}s, 스템 ${data.map((s) => s.name).join('/')}, 게인 [${gains.join(', ')}]`,
+      )
+      return this.duration_
+    })
+  }
+
+  // 스템 볼륨 적용: 게인 반영해 다시 합친 뒤 재생 버퍼를 통째로 교체 (위치/재생 상태 유지)
+  // 실시간 게인이 아니라 반영이 약간 늦음 — 아이폰 CPU(지직거림)와 음질을 위한 절충
+  async applyStemGains(gains: number[]): Promise<void> {
+    const stems = this.stemData
+    if (!stems) {
+      console.warn('스템 믹스 무시: 스템 데이터 없음 (일반 곡이거나 로드 전)')
+      return
+    }
+    // 같은 값이면 스킵 (로드 직후 App 이펙트가 저장값을 한 번 더 밀어넣는 경우 등)
+    if (
+      gains.length === this.stemGains.length &&
+      gains.every((g, i) => g === this.stemGains[i])
+    ) {
+      console.log('스템 믹스 스킵: 게인 변화 없음')
+      return
+    }
+    this.stemGains = gains.slice()
+    const token = ++this.remixToken
+    console.log(`스템 재합성 시작: [${gains.map((g) => Math.round(g * 100)).join(', ')}]%`)
+    const t0 = performance.now()
+    try {
+      const mixed = await this.buildStemMix(stems, gains)
+      await this.runExclusive(async () => {
+        // 합성하는 사이 새 변경/다른 곡 로드가 들어왔으면 이 결과는 폐기
+        if (token !== this.remixToken || this.stemData !== stems) {
+          console.log('스템 믹스 폐기: 합성 중 새 변경/곡 교체 발생')
+          return
+        }
+        const node = this.stretchNode
+        if (!node) return
+        const pos = this.position
+        await node.dropBuffers()
+        await node.addBuffers(
+          [mixed.left, mixed.right],
+          [mixed.left.buffer as ArrayBuffer, mixed.right.buffer as ArrayBuffer],
+        )
+        node.schedule({ input: pos }) // 위치 유지 — 재생 중이면 그 자리에서 새 믹스로 이어짐
+        console.log(
+          `스템 믹스 적용: [${gains.map((g) => Math.round(g * 100)).join(', ')}]% (${((performance.now() - t0) / 1000).toFixed(1)}초)`,
+        )
+      })
+    } catch (err) {
+      // 실패를 조용히 삼키지 않음 — 폰(eruda)에서 원인 확인용
+      console.error('스템 믹스 실패:', err)
+      throw err
+    }
   }
 
   get duration(): number {
@@ -429,10 +615,19 @@ export class Player {
       this.ensureContext()
       const node = await this.getStretchNode()
 
-      // 보관해둔 디코딩 버퍼 재주입 + 멈췄던 위치/템포/피치 복원
-      const channels: Float32Array[] = []
-      for (let c = 0; c < this.audioBuffer_.numberOfChannels; c++) {
-        channels.push(this.audioBuffer_.getChannelData(c))
+      // 재생 데이터 재주입 + 멈췄던 위치/템포/피치 복원
+      // 스템 곡: 보관 중인 스템에서 현재 게인 그대로 다시 합성 (뮤트 상태까지 복원됨)
+      let channels: Float32Array[]
+      let transfer: ArrayBuffer[] | undefined
+      if (this.stemData) {
+        const mixed = await this.buildStemMix(this.stemData, this.stemGains)
+        channels = [mixed.left, mixed.right]
+        transfer = [mixed.left.buffer as ArrayBuffer, mixed.right.buffer as ArrayBuffer]
+      } else {
+        channels = []
+        for (let c = 0; c < this.audioBuffer_!.numberOfChannels; c++) {
+          channels.push(this.audioBuffer_!.getChannelData(c))
+        }
       }
       await node.schedule({
         active: false,
@@ -440,7 +635,7 @@ export class Player {
         rate: this._tempo,
         semitones: this._pitch,
       })
-      await node.addBuffers(channels)
+      await node.addBuffers(channels, transfer)
 
       // 재생 중이었다면(그 사이 사용자가 일시정지 안 했다면) 이어서 재생
       if (this.playing) {
