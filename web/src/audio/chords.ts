@@ -43,6 +43,8 @@ export async function analyzeChords(
     })
     worker.onmessage = (e: MessageEvent<AnalyzeResponse>) => {
       worker.terminate()
+      // 박별 판정 로그 (debug 요청 시) — 워커 콘솔은 환경에 따라 안 보여서 여기서 출력
+      e.data.debugLines?.forEach((line) => console.log(line))
       if (e.data.error) {
         console.warn(`코드 분석 실패: ${e.data.error}`)
         resolve(null)
@@ -56,7 +58,13 @@ export async function analyzeChords(
       resolve(null)
     }
     worker.postMessage(
-      { samples, sampleRate: ANALYZE_SAMPLE_RATE, beatGrid: beatGrid ?? null },
+      {
+        samples,
+        sampleRate: ANALYZE_SAMPLE_RATE,
+        beatGrid: beatGrid ?? null,
+        // 박별 판정 수치 로그 (튜닝용) — 콘솔에서 localStorage.setItem('riffslow-chords-debug','1') 후 재분석
+        debug: localStorage.getItem('riffslow-chords-debug') === '1',
+      },
       [samples.buffer],
     )
   })

@@ -7,8 +7,10 @@
 // 표기: 프렛 배열은 6번줄(굵은 저음줄)→1번줄 순서, -1 = 뮤트(×), 0 = 개방(○)
 import { memo } from 'react'
 
+// 샤프/플랫 둘 다 파싱 (표기는 v10부터 플랫 기준, 구버전 저장 데이터는 샤프일 수 있음)
 const NOTE_PC: Record<string, number> = {
-  C: 0, 'C#': 1, D: 2, 'D#': 3, E: 4, F: 5, 'F#': 6, G: 7, 'G#': 8, A: 9, 'A#': 10, B: 11,
+  C: 0, 'C#': 1, Db: 1, D: 2, 'D#': 3, Eb: 3, E: 4, F: 5, 'F#': 6, Gb: 6,
+  G: 7, 'G#': 8, Ab: 8, A: 9, 'A#': 10, Bb: 10, B: 11,
 }
 
 interface Shape {
@@ -27,6 +29,47 @@ const OPEN_SHAPES: Record<string, Shape> = {
   '9-m': { frets: [-1, 0, 2, 2, 1, 0] }, // Am
   '4-m': { frets: [0, 2, 2, 0, 0, 0] }, // Em
   '2-m': { frets: [-1, -1, 0, 2, 3, 1] }, // Dm
+}
+
+// 흔한 오픈 도미넌트 7th 운지 (키: 근음pc)
+const SEVENTH_OPEN: Record<number, Shape> = {
+  9: { frets: [-1, 0, 2, 0, 2, 0] }, // A7
+  11: { frets: [-1, 2, 1, 2, 0, 2] }, // B7
+  0: { frets: [-1, 3, 2, 3, 1, 0] }, // C7
+  2: { frets: [-1, -1, 0, 2, 1, 2] }, // D7
+  4: { frets: [0, 2, 0, 1, 0, 0] }, // E7
+  7: { frets: [3, 2, 0, 0, 0, 1] }, // G7
+}
+
+// 흔한 오픈 마이너 7th 운지 (키: 근음pc)
+const MIN7_OPEN: Record<number, Shape> = {
+  9: { frets: [-1, 0, 2, 0, 1, 0] }, // Am7
+  4: { frets: [0, 2, 0, 0, 0, 0] }, // Em7
+  2: { frets: [-1, -1, 0, 2, 1, 1] }, // Dm7
+}
+
+// 마이너 7th 바레 자동 생성 (Em7폼/Am7폼 중 낮은 프렛)
+function barreM7Shape(rootPc: number): Shape {
+  const fE = (rootPc - NOTE_PC.E + 12) % 12 || 12
+  const fA = (rootPc - NOTE_PC.A + 12) % 12 || 12
+  if (fE <= fA) {
+    const f = fE
+    return { frets: [f, f + 2, f, f, f, f], barre: { fret: f, from: 0, to: 5 } }
+  }
+  const f = fA
+  return { frets: [-1, f, f + 2, f, f + 1, f], barre: { fret: f, from: 1, to: 5 } }
+}
+
+// 도미넌트 7th 바레 자동 생성 (E7폼/A7폼 중 낮은 프렛)
+function barre7Shape(rootPc: number): Shape {
+  const fE = (rootPc - NOTE_PC.E + 12) % 12 || 12
+  const fA = (rootPc - NOTE_PC.A + 12) % 12 || 12
+  if (fE <= fA) {
+    const f = fE
+    return { frets: [f, f + 2, f, f + 1, f, f], barre: { fret: f, from: 0, to: 5 } }
+  }
+  const f = fA
+  return { frets: [-1, f, f + 2, f, f + 2, f], barre: { fret: f, from: 1, to: 5 } }
 }
 
 // 바레 코드 자동 생성 (E폼/A폼 중 낮은 프렛)
@@ -49,10 +92,16 @@ function barreShape(rootPc: number, minor: boolean): Shape {
 
 // 코드명 파싱 → 운지 (모르는 형식이면 null)
 function shapeFor(chord: string): Shape | null {
-  const minor = chord.endsWith('m')
-  const rootName = minor ? chord.slice(0, -1) : chord
+  const seventh = chord.endsWith('7') // 7th (분석기는 "X7"/"Xm7"을 냄)
+  const base = seventh ? chord.slice(0, -1) : chord
+  const minor = base.endsWith('m')
+  const rootName = minor ? base.slice(0, -1) : base
   const pc = NOTE_PC[rootName]
   if (pc === undefined) return null
+  if (seventh) {
+    if (minor) return MIN7_OPEN[pc] ?? barreM7Shape(pc)
+    return SEVENTH_OPEN[pc] ?? barre7Shape(pc)
+  }
   return OPEN_SHAPES[`${pc}-${minor ? 'm' : 'M'}`] ?? barreShape(pc, minor)
 }
 

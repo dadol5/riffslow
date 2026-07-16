@@ -20,6 +20,12 @@ interface BpmGadgetProps {
   locked: boolean // 자물쇠 상태 (잠김 = 조절 불가 + 속도 반영 표시)
   onChange: (bpm: number) => void
   onToggleLock: () => void
+  // 첫 박 위치(오프셋) 조정 — 메트로놈 클릭과 코드 타임라인이 함께 이동
+  onOffsetNudge: (deltaSec: number) => void
+  // 박자 탭: 재생 중 박자에 맞춰 탭하면 자동 정렬 (3탭부터 반영)
+  playing: boolean
+  tapCount: number
+  onBeatTap: () => void
 }
 
 function BpmGadget({
@@ -30,6 +36,10 @@ function BpmGadget({
   locked,
   onChange,
   onToggleLock,
+  onOffsetNudge,
+  playing,
+  tapCount,
+  onBeatTap,
 }: BpmGadgetProps) {
   // 홀드 반복 중에도 최신 bpm을 읽기 위한 미러 (setInterval 클로저는 prop이 낡기 때문)
   const bpmRef = useRef(bpm)
@@ -38,7 +48,8 @@ function BpmGadget({
 
   const step = (dir: 1 | -1) => {
     // 분석 실패(?)여도 수동으로 잡을 수 있게 — 값이 없으면 120부터 시작
-    const cur = bpmRef.current ?? 120
+    // 소수점 BPM(자동 분석)은 수동 조절 시작 시 정수로 스냅 (±1 단위 조절)
+    const cur = Math.round(bpmRef.current ?? 120)
     onChange(Math.max(MIN_BPM, Math.min(cur + dir, MAX_BPM)))
   }
 
@@ -71,13 +82,17 @@ function BpmGadget({
   } else if (bpm == null) {
     display = '?' // 분석 실패 — 🔓 열고 −/+로 직접 설정
   } else {
-    display = String(locked ? Math.round((bpm * tempo) / 100) : bpm)
+    // 소수점 BPM은 표시만 반올림 (그리드 계산은 정밀값 그대로)
+    display = String(Math.round(locked ? (bpm * tempo) / 100 : bpm))
   }
 
   const canStep = hasTrack && !analyzing && !locked
+  // 오프셋 조정은 그리드(BPM 값)가 있어야 의미 있음
+  const canNudge = hasTrack && !analyzing && bpm != null
 
   return (
     <div className="bpm-gadget">
+      <div className="bpm-main-row">
       <button
         className="bpm-adjust"
         onPointerDown={() => holdStart(-1)}
@@ -96,7 +111,7 @@ function BpmGadget({
           <span className="bpm-unit">BPM</span>
           {/* 잠김 + 속도 변경 상태에선 100% 기준값을 작게 병기 / 열림 상태에선 기준 안내 */}
           {bpm != null && locked && tempo !== 100 && (
-            <span className="bpm-effective">{bpm} @ 100%</span>
+            <span className="bpm-effective">{Math.round(bpm * 10) / 10} @ 100%</span>
           )}
           {hasTrack && !analyzing && !locked && (
             <span className="bpm-effective">100% 기준값 설정</span>
@@ -152,6 +167,38 @@ function BpmGadget({
       >
         +
       </button>
+      </div>
+
+      {/* 박자 맞춤: 재생하며 박자에 맞춰 [탭]을 두드리면 자동 정렬, 10ms 버튼은 마무리 미세조정 */}
+      <div className="bpm-offset-row">
+        <button
+          className="bpm-offset-btn"
+          disabled={!canNudge}
+          onClick={() => onOffsetNudge(-0.01)}
+        >
+          ◀ 10ms
+        </button>
+        <button
+          className="bpm-tap-btn"
+          disabled={!canNudge || !playing}
+          onClick={onBeatTap}
+        >
+          {!playing
+            ? '박자 탭 (재생 중에)'
+            : tapCount >= 3
+              ? `박자 탭 ✓${tapCount}`
+              : tapCount > 0
+                ? `박자 탭 ${tapCount}`
+                : '박자 탭'}
+        </button>
+        <button
+          className="bpm-offset-btn"
+          disabled={!canNudge}
+          onClick={() => onOffsetNudge(0.01)}
+        >
+          10ms ▶
+        </button>
+      </div>
     </div>
   )
 }

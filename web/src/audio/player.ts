@@ -386,6 +386,26 @@ export class Player {
     })
   }
 
+  // 분석용 합성: 스템별 가중치로 합친 AudioBuffer를 반환 (스템 곡이 아니면 null)
+  // 용도 = 코드 분석은 드럼 제거+보컬 감량(크로마 오염 억제), BPM 분석은 드럼만(비트의 근원)
+  async buildAnalysisMix(weight: (name: string) => number): Promise<AudioBuffer | null> {
+    const stems = this.stemData
+    const ctx = this.ctx
+    if (!stems || !ctx) return null
+    const gains = stems.map((s) => weight(s.name))
+    // 남는 스템이 없으면 의미 없음 — 호출부가 전체 믹스로 폴백
+    if (gains.every((g) => g === 0)) return null
+    const mixed = await this.buildStemMix(stems, gains)
+    const buf = new AudioBuffer({
+      numberOfChannels: 2,
+      length: mixed.left.length,
+      sampleRate: ctx.sampleRate,
+    })
+    buf.copyToChannel(mixed.left, 0)
+    buf.copyToChannel(mixed.right, 1)
+    return buf
+  }
+
   // 스템 볼륨 적용: 게인 반영해 다시 합친 뒤 재생 버퍼를 통째로 교체 (위치/재생 상태 유지)
   // 실시간 게인이 아니라 반영이 약간 늦음 — 아이폰 CPU(지직거림)와 음질을 위한 절충
   async applyStemGains(gains: number[]): Promise<void> {

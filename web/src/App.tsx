@@ -74,8 +74,12 @@ function App() {
   const [pitch, setPitch] = useState(0) // 피치 반음 (곡별 저장)
 
   // ── BPM (곡별 저장): undefined = 미분석, null = 분석 실패 확정, number = 값 ──
+  // 분석 로직 버전 — 로직이 바뀌면 올려서 기존 저장 데이터를 자동 재분석
+  // (v2: 스템 곡은 드럼 스템으로 분석 + 소수점 BPM — 정수 그리드의 누적 드리프트 해결)
+  const BPM_ANALYSIS_VERSION = 2
   const [bpm, setBpm] = useState<number | null | undefined>(undefined)
   const [bpmOffset, setBpmOffset] = useState<number | null>(null) // 첫 박 위치 (메트로놈용)
+  const [bpmVer, setBpmVer] = useState(BPM_ANALYSIS_VERSION)
   const [bpmAnalyzing, setBpmAnalyzing] = useState(false)
   const [metroOn, setMetroOn] = useState(false) // 메트로놈 on/off (세션 한정 — 저장 안 함)
   const [bpmLocked, setBpmLocked] = useState(true) // BPM 자물쇠 (잠김 = 조절 불가 + 속도 반영 표시)
@@ -136,22 +140,36 @@ function App() {
   // BPM 자동 분석 (로드 완료 후 백그라운드 실행 — 재생/UI를 막지 않음)
   // 결과를 반환해서 후속 코드 분석이 박 정렬 그리드로 바로 쓸 수 있게 함 (state는 반영이 늦음)
   const runBpmAnalysis = async (trackId: number) => {
-    const buffer = player.audioBuffer
-    if (!buffer) return null
+    const base = player.audioBuffer
+    if (!base) return null
     setBpmAnalyzing(true)
-    const result = await analyzeBpm(buffer)
+    // 스템 곡이면 드럼 스템만으로 분석 (비트의 근원 — 재구성 믹스보다 정확)
+    // 드럼 스템이 없거나 드럼 기반 분석이 실패하면 전체 믹스로 폴백
+    const drums = await player.buildAnalysisMix((n) => (n === 'drums' ? 1 : 0))
+    let result = drums ? await analyzeBpm(drums) : null
+    if (drums) {
+      console.log(`BPM 분석 입력: 드럼 스템 (${result ? '성공' : '실패 → 전체 믹스 재시도'})`)
+    }
+    if (!result) result = await analyzeBpm(base)
     // 분석 도중 다른 곡으로 바뀌었으면 결과 폐기 (그 곡의 로드 흐름이 상태를 관리)
     if (currentIdRef.current !== trackId) return null
     setBpmAnalyzing(false)
     setBpm(result?.bpm ?? null) // 실패는 null 저장 → 다음 로드 때 재분석됨
     setBpmOffset(result?.offset ?? null)
+    setBpmVer(BPM_ANALYSIS_VERSION)
     return result
   }
 
   // ── 코드/KEY (곡별 저장): undefined = 미분석, null = 실패, 배열 = 값 ──
   // 분석 로직 버전 — 로직이 바뀌면 올려서 기존 저장 데이터를 자동 재분석
-  // (v4: 박 정렬, v5: HPSS+베이스 루트+다이어토닉+Viterbi, v6: 드럼 구간 게이트+마디 스냅)
-  const CHORDS_ANALYSIS_VERSION = 6
+  // (v4: 박 정렬, v5: HPSS+베이스 루트+다이어토닉+Viterbi, v6: 드럼 구간 게이트+마디 스냅,
+  //  v7: 스템 곡은 드럼/보컬 제외 반주만으로 분석 — 크로마 오염 원천 제거,
+  //  v8: KEY를 코드 진행 적합도로 재판정 — KeyExtractor의 이웃 조 혼동(F↔Bb) 교정,
+  //  v9: 상대 장/단조(F↔Dm) 판별 — 자연단조 기준 동점 + 종지/끝코드/으뜸화음 순 결정,
+  //  v10: 표기를 플랫 기준으로 (A# → Bb — 사용자 선호),
+  //  v11: 도미넌트 7th(X7) 사전 추가 — A7이 Em으로 미끄러지던 문제,
+  //  v12: 보컬을 35% 가중치로 분석에 재포함 — 반주 옅은 구간의 화성 힌트 복원)
+  const CHORDS_ANALYSIS_VERSION = 14
   const [chords, setChords] = useState<ChordSegment[] | null | undefined>(undefined)
   const [songKey, setSongKey] = useState<string | null | undefined>(undefined)
   const [chordsVer, setChordsVer] = useState(CHORDS_ANALYSIS_VERSION)
@@ -163,10 +181,18 @@ function App() {
     trackId: number,
     beatGrid: { bpm: number; offset: number } | null,
   ) => {
-    const buffer = player.audioBuffer
-    if (!buffer) return
+    const base = player.audioBuffer
+    if (!base) return
     setChordsAnalyzing(true)
-    console.log(`코드/KEY 분석 시작 (백그라운드, 박 정렬 ${beatGrid ? 'ON' : 'OFF'})...`)
+    // 스템 곡이면 드럼 제거 + 보컬 35%로 분석 (v7: 보컬 완전 제거 → v12: 감량 포함)
+    // 반주가 옅은 구간에선 보컬 멜로디가 화성의 주요 힌트라 완전히 빼면 이웃 화음으로 미끄러짐
+    const harmonic = await player.buildAnalysisMix((n) =>
+      n === 'drums' ? 0 : n === 'vocals' ? 0.35 : 1,
+    )
+    const buffer = harmonic ?? base
+    console.log(
+      `코드/KEY 분석 시작 (백그라운드, 박 정렬 ${beatGrid ? 'ON' : 'OFF'}, 입력 ${harmonic ? '반주 스템(드럼/보컬 제외)' : '전체 믹스'})...`,
+    )
     const started = performance.now()
     const result = await analyzeChords(buffer, beatGrid)
     if (currentIdRef.current !== trackId) return
@@ -291,6 +317,7 @@ function App() {
         trackE,
         bpm, // undefined(미분석)는 저장돼도 무해 — 다음 로드에서 분석 재시도됨
         bpmOffset,
+        bpmVer,
         chords,
         songKey,
         chordsVer,
@@ -298,7 +325,7 @@ function App() {
       })
     }, 300)
     return () => clearTimeout(timer) // 300ms 안에 또 바뀌면 이전 예약 취소 (디바운스)
-  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset, chords, songKey, chordsVer, stemMix])
+  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset, bpmVer, chords, songKey, chordsVer, stemMix])
 
   // 곡이 끝까지 재생되면 엔진이 알려줌 → 화면 상태 되돌리기
   useEffect(() => {
@@ -503,6 +530,62 @@ function App() {
     player.metronome = next
   }
 
+  // 첫 박 위치(오프셋) 미세조정 — 자동 분석이 잡은 첫 박이 어긋났을 때 귀로 맞추는 용도
+  // 코드(v6)는 이 그리드에 스냅해 만들어지므로 코드 타임라인도 같은 만큼 함께 이동시킴
+  const handleOffsetNudge = (deltaSec: number) => {
+    setBpmOffset((prev) => (prev ?? 0) + deltaSec)
+    setChords((prev) =>
+      prev == null
+        ? prev
+        : prev.map((seg) => ({
+            ...seg,
+            start: Math.max(0, seg.start + deltaSec),
+            end: seg.end + deltaSec,
+          })),
+    )
+  }
+
+  // ── 박자 탭: 재생 중 박자에 맞춰 탭하면 탭 위상의 평균으로 첫 박을 자동 정렬 ──
+  // (10ms 버튼 연타는 귀로 맞추기 힘들다는 피드백 → 탭 방식으로 교체)
+  const beatTapsRef = useRef<number[]>([]) // 탭 순간 "들리던 소리"의 원곡 시간들
+  const lastTapWallRef = useRef(0)
+  const [tapCount, setTapCount] = useState(0)
+
+  const handleBeatTap = () => {
+    if (bpm == null || !isPlaying) return
+    const now = performance.now()
+    // 잠깐(2.5초) 쉬면 새 탭 세션으로 시작
+    if (now - lastTapWallRef.current > 2500) beatTapsRef.current = []
+    lastTapWallRef.current = now
+
+    // 탭 순간 실제로 들리던 위치 = 엔진 위치 − 출력 지연(배속 환산) — 코드 표시와 같은 보정
+    const heard = Math.max(0, player.position - player.playbackLatency * (tempo / 100))
+    const taps = beatTapsRef.current
+    taps.push(heard)
+    if (taps.length > 8) taps.shift() // 최근 8탭만 (초반 어긋난 탭의 영향 축소)
+    setTapCount(taps.length)
+
+    // 3탭부터 정렬 시작: 박 주기 위의 위상들을 원형 평균 → 그 위상으로 오프셋 이동
+    if (taps.length < 3) return
+    const period = 60 / bpm // 원곡 시간 기준 박 간격 (position이 원곡 시간축이라 배속 무관)
+    const twoPi = Math.PI * 2
+    let sx = 0
+    let sy = 0
+    for (const t of taps) {
+      const ph = ((t % period) / period) * twoPi
+      sx += Math.cos(ph)
+      sy += Math.sin(ph)
+    }
+    let meanPhase = (Math.atan2(sy, sx) / twoPi) * period
+    if (meanPhase < 0) meanPhase += period
+    const curPhase = (((bpmOffset ?? 0) % period) + period) % period
+    let delta = meanPhase - curPhase
+    // 최단 방향으로 이동 (반 주기 이상 차이면 반대쪽이 가까움)
+    if (delta > period / 2) delta -= period
+    if (delta < -period / 2) delta += period
+    handleOffsetNudge(delta)
+  }
+
   // (앱 내 스템 추출 UI는 제거됨 — 추출은 PC의 UVR로 하는 게 확정 흐름.
   //  엔진 코드는 src/audio/stems.ts의 separateStems/encodeWavStereo로 남아 있어
   //  추후 SET-01 설정 화면에서 백업 기능으로 부활 가능)
@@ -660,6 +743,7 @@ function App() {
       // (실패도 재시도하는 이유: 분석 로직이 개선되면 자동으로 다시 혜택받도록 — 백그라운드라 부담 없음)
       setBpm(s.bpm)
       setBpmOffset(s.bpmOffset ?? null)
+      setBpmVer(s.bpmVer ?? 1)
       setBpmAnalyzing(false)
       setChords(s.chords)
       setSongKey(s.songKey)
@@ -671,9 +755,13 @@ function App() {
       if (s.chords != null) {
         console.log(`저장된 코드 복원: KEY = ${s.songKey}, 구간 ${s.chords.length}개`)
       }
-      const needBpm = s.bpm == null
       // 미분석/실패뿐 아니라 구버전 로직으로 분석된 데이터도 재분석 대상
-      const needChords = s.chords == null || (s.chordsVer ?? 1) < CHORDS_ANALYSIS_VERSION
+      const needBpm = s.bpm == null || (s.bpmVer ?? 1) < BPM_ANALYSIS_VERSION
+      // 디버그 모드(판정 근거 로그)면 로드할 때마다 강제 재분석 — 로그는 분석 중에만 나오므로
+      const chordsDebug = localStorage.getItem('riffslow-chords-debug') === '1'
+      // BPM이 다시 분석되면 그리드가 바뀌므로 코드도 새 그리드로 다시 정렬해야 함
+      const needChords =
+        s.chords == null || (s.chordsVer ?? 1) < CHORDS_ANALYSIS_VERSION || needBpm || chordsDebug
       if (needBpm || needChords) {
         // 필요한 것만 순차 실행 (동시에 돌리면 폰 CPU 부담)
         void (async () => {
@@ -856,15 +944,15 @@ function App() {
           />
         )}
         {activeGadget === 'pitch' && (
-          <PitchGadget pitch={pitch} onChange={handlePitchChange} />
+          <PitchGadget pitch={pitch} songKey={songKey} onChange={handlePitchChange} />
         )}
         {activeGadget === 'chords' && (
           <ChordsGadget
             hasTrack={hasTrack}
             analyzing={chordsAnalyzing}
             chords={chords}
-            songKey={songKey}
             duration={duration}
+            pitch={pitch}
             // 재생 중엔 엔진 출력 지연만큼 앞서가는 위치를 "지금 들리는 소리" 기준으로 보정
             position={
               isPlaying
@@ -883,6 +971,10 @@ function App() {
             locked={bpmLocked}
             onChange={handleBpmChange}
             onToggleLock={handleBpmLockToggle}
+            onOffsetNudge={handleOffsetNudge}
+            playing={isPlaying}
+            tapCount={tapCount}
+            onBeatTap={handleBeatTap}
           />
         )}
       </div>

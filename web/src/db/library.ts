@@ -27,6 +27,7 @@ export interface TrackSettings {
   // undefined = 아직 분석 안 함, null = 직전 분석 실패 — 둘 다 로드 시 재분석함
   bpm?: number | null
   bpmOffset?: number | null // 첫 박 위치 (초) — 메트로놈 그리드 기준점
+  bpmVer?: number // BPM 분석 로직 버전 — 낮으면 로드 시 자동 재분석 (v2: 드럼 스템+소수점)
   // 코드/KEY 자동 분석 결과 (undefined/null 규칙은 bpm과 동일)
   chords?: ChordSegment[] | null
   songKey?: string | null // 예: "C minor"

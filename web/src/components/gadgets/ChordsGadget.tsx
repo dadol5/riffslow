@@ -4,6 +4,7 @@
 // 코드명 아래 운지 다이어그램 표시 (좁은 블록은 이름만)
 import { useRef, useState } from 'react'
 import type { ChordSegment } from '../../audio/chords'
+import { prettyChord, transposeName } from '../../utils/music'
 import ChordDiagram from '../ChordDiagram'
 
 // 타임라인 축척: 1초 = 50px (블록 폭이 코드 길이에 비례)
@@ -19,9 +20,9 @@ interface ChordsGadgetProps {
   hasTrack: boolean
   analyzing: boolean // 분석 진행 중 여부
   chords: ChordSegment[] | null | undefined // undefined = 미분석, null = 분석 실패
-  songKey: string | null | undefined // 예: "C minor" (표시 위치는 임시 — 사용자 미정)
   position: number // 현재 재생 위치 (초)
   duration: number // 곡 길이 (초) — 드래그 탐색 범위 제한용
+  pitch: number // 피치 반음 — 코드명/운지를 이동된 조로 표시 (사용자 요청)
   onSeek: (pos: number) => void
 }
 
@@ -29,9 +30,9 @@ function ChordsGadget({
   hasTrack,
   analyzing,
   chords,
-  songKey,
   position,
   duration,
+  pitch,
   onSeek,
 }: ChordsGadgetProps) {
   // 드래그 상태 — moved가 true가 된 뒤로는 탭(코드 시크)을 무시
@@ -102,9 +103,6 @@ function ChordsGadget({
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerEnd}
     >
-      {/* KEY 표시 (임시 위치 — 오른쪽 위 구석) */}
-      {songKey && <div className="chords-key">Key: {songKey}</div>}
-
       {/* 시간 기준선 (고정 — 코드 시작 눈금과 플레이헤드 점이 이 선 위에 놓임) */}
       <div className="chords-baseline" />
 
@@ -117,6 +115,8 @@ function ChordsGadget({
           const active = position >= seg.start && position < seg.end
           // 다음 코드 시작까지의 공간이 좁으면 다이어그램 생략 (겹침 방지)
           const room = ((chords[i + 1]?.start ?? seg.end) - seg.start) * PX_PER_SEC
+          // 피치가 옮겨져 있으면 코드도 이동된 조로 표시 (저장 데이터는 원조 그대로)
+          const shown = transposeName(seg.chord, pitch)
           return (
             <button
               key={i}
@@ -128,8 +128,8 @@ function ChordsGadget({
                 onSeek(seg.start)
               }}
             >
-              <span className="chord-name">{seg.chord}</span>
-              {room >= MIN_DIAGRAM_PX && <ChordDiagram chord={seg.chord} />}
+              <span className="chord-name">{prettyChord(shown)}</span>
+              {room >= MIN_DIAGRAM_PX && <ChordDiagram chord={shown} />}
             </button>
           )
         })}

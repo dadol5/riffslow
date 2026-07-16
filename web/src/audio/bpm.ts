@@ -7,11 +7,25 @@
 // ⚠️ 라이브러리 내부 게이트: 저역 필터 후 최대 진폭이 0.25 이하면 탐색 없이 즉시 실패함.
 // 동영상 추출 오디오(폰 카메라 = 저음 빈약, 낮은 녹음 음량)가 여기 걸리는 경우가 많아
 // 실패 시 저역 실측 진폭 기준으로 증폭한 사본을 만들어 한 번 더 시도한다.
-import { guess } from 'web-audio-beat-detector'
+import { analyze, guess } from 'web-audio-beat-detector'
 
 export interface BpmResult {
-  bpm: number // 추정 BPM (정수)
+  bpm: number // 추정 BPM (소수점 포함 — 정수 그리드는 곡 길이만큼 오차가 누적됨)
   offset: number // 첫 박 위치 (원곡 기준 초)
+}
+
+// guess()는 정수 BPM만 반환 → 진짜 템포가 117.9 같은 곡은 그리드가 점점 밀림
+// analyze()의 정밀 템포가 정수 추정과 사실상 같은 값이면 소수점 값을 채택
+async function refineBpm(buffer: AudioBuffer, intBpm: number): Promise<number> {
+  try {
+    const precise = await analyze(buffer)
+    if (Math.abs(precise - intBpm) < 2) {
+      return Math.round(precise * 100) / 100
+    }
+  } catch {
+    // 정밀 분석 실패는 무시 — 정수값 그대로 사용
+  }
+  return intBpm
 }
 
 // 라이브러리와 동일한 전처리 조건 (게이트 통과 여부를 우리가 미리 재현하기 위함)
@@ -58,8 +72,9 @@ function buildBoostedMono(buffer: AudioBuffer, gain: number): AudioBuffer {
 export async function analyzeBpm(buffer: AudioBuffer): Promise<BpmResult | null> {
   try {
     const { bpm, offset } = await guess(buffer)
-    console.log(`BPM 분석 완료: ${bpm} BPM, 첫 박 ${offset.toFixed(3)}s`)
-    return { bpm, offset }
+    const refined = await refineBpm(buffer, bpm)
+    console.log(`BPM 분석 완료: ${refined} BPM (정수 추정 ${bpm}), 첫 박 ${offset.toFixed(3)}s`)
+    return { bpm: refined, offset }
   } catch (err) {
     console.warn(`BPM 1차 분석 실패: ${err}`)
   }
@@ -79,9 +94,11 @@ export async function analyzeBpm(buffer: AudioBuffer): Promise<BpmResult | null>
 
     const gain = 0.9 / lowPeak // 필터 후 최대 진폭이 0.9가 되도록 증폭
     console.log(`저역 진폭 ${lowPeak.toFixed(3)} < 게이트 ${AMPLITUDE_GATE} → ${gain.toFixed(1)}배 증폭 후 재분석`)
-    const { bpm, offset } = await guess(buildBoostedMono(buffer, gain))
-    console.log(`BPM 분석 완료 (증폭 재시도): ${bpm} BPM, 첫 박 ${offset.toFixed(3)}s`)
-    return { bpm, offset }
+    const boosted = buildBoostedMono(buffer, gain)
+    const { bpm, offset } = await guess(boosted)
+    const refined = await refineBpm(boosted, bpm)
+    console.log(`BPM 분석 완료 (증폭 재시도): ${refined} BPM (정수 추정 ${bpm}), 첫 박 ${offset.toFixed(3)}s`)
+    return { bpm: refined, offset }
   } catch (err) {
     console.warn(`BPM 분석 실패 확정 (증폭 재시도도 실패): ${err}`)
     return null
