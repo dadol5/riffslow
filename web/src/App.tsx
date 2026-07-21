@@ -14,6 +14,7 @@ import { analyzeBpm } from './audio/bpm'
 import { analyzeChords, type ChordSegment } from './audio/chords'
 import { guessStemName, mixStemsToWav, stemSetTitle, STEM_ORDER } from './audio/stems'
 import MixerSheet from './components/MixerSheet'
+import { keepScreenAwake } from './utils/wakeLock'
 import {
   addTrack,
   deleteTrack,
@@ -109,6 +110,11 @@ function App() {
       return next
     })
   }
+
+  // 연습 중 폰 화면이 자동으로 꺼지지 않게 (앱이 화면에 떠 있는 동안 유지)
+  useEffect(() => {
+    keepScreenAwake()
+  }, [])
 
   // 믹서 상태 → 엔진 반영 (솔로가 있으면 솔로만 들림, 없으면 뮤트 제외 전부)
   // 반영 = 스템 재합성(무거움)이라 연속 변경(페이더 드래그)은 250ms 디바운스로 마지막 값만
