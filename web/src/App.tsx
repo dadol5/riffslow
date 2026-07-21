@@ -959,7 +959,10 @@ function App() {
             chords={chords}
             duration={duration}
             pitch={pitch}
+            bpm={bpm}
             // 재생 중엔 엔진 출력 지연만큼 앞서가는 위치를 "지금 들리는 소리" 기준으로 보정
+            // ⚠️ 여기에 하드웨어 지연/트랜지션 상쇄를 더하는 시도는 하지 말 것 — 실기기에서
+            // 이 형태가 정확하다고 확인됨, 손대면 오히려 어긋남 (2026-07-17 두 차례)
             position={
               isPlaying
                 ? Math.max(0, position - player.playbackLatency * (tempo / 100))

@@ -473,6 +473,8 @@ export class Player {
   }
 
   // 스트레치 엔진 출력 지연(실시간 초) — 화면 표시를 "지금 들리는 소리"에 맞출 때 보정용
+  // ⚠️ 하드웨어 출력 지연(outputLatency)을 더하는 시도는 하지 말 것: 실기기에서 이 값(엔진 지연만)
+  // 기준이 정확하다고 사용자가 확인했고, 더했더니 오히려 어긋남 (2026-07-17 두 차례 확인)
   get playbackLatency(): number {
     return this.stretchLatency
   }
