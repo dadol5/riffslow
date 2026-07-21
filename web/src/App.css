@@ -972,6 +972,11 @@
   bottom: 10px;
   width: 0; /* 자식 아이템은 절대 배치라 폭 불필요 */
   transition: transform 90ms linear; /* 엔진 위치 갱신(50ms 스텝) 사이를 매끈하게 보간 */
+  /* 플레이헤드 세로선보다 위 — 코드 이름 글자가 선을 덮게 (사용자 확정).
+     ⚠️ 안쪽(.chord-item 등)에 z-index를 줘도 소용없음: 이 transform이 스태킹 컨텍스트를
+     만들어 내부 z-index가 스트립 안에 갇힘 — 반드시 스트립 자체에 줘야 함.
+     운지 그림 구간은 gapped 그라데이션이 선을 지우므로 그림 뒤 선 비침은 없음 */
+  z-index: 1;
 }
 
 /* 코드 아이템: 박스 없이 시작 지점에 이름 + 운지 그림 (사용자 스크린샷 스타일) */
@@ -1009,11 +1014,16 @@
   font-size: 15px;
   font-weight: bold;
   line-height: 1.1;
+  /* 이름만 시작 눈금점 중앙 정렬 (사용자 확정) — 운지 그림은 눈금 오른쪽 그대로
+     (-2px = 아이템 좌측 패딩 보정: 이름 중심이 눈금점에 정확히 오도록) */
+  transform: translateX(calc(-50% - 2px));
 }
 
 .chord-item .chord-diagram {
   height: 56px;
   flex-shrink: 0;
+  /* 눈금 오른쪽 배치 유지, 이름과 같은 -2px 패딩 보정만 (그림 왼쪽 끝 = 눈금점) */
+  transform: translateX(-2px);
 }
 
 .chord-item.active {
@@ -1031,9 +1041,27 @@
   margin-left: -0.75px;
   background: #fff;
   opacity: 0.9;
-  box-shadow: 0 0 6px #fff, 0 0 14px var(--neon);
+  /* 글로우는 drop-shadow — box-shadow는 요소 박스 전체를 따라가서
+     .gapped로 선 가운데를 뚫어도 빛기둥이 그대로 남음 */
+  filter: drop-shadow(0 0 6px #fff) drop-shadow(0 0 10px var(--neon));
   pointer-events: none; /* 아래 코드 아이템 탭을 가리지 않게 */
 }
+
+/* 운지 그림이 선 자리에 걸린 동안만 그림 구간(26~86px)을 뚫음 —
+   코드표를 안 가리게 (그림이 없을 땐 온전한 선, ChordsGadget이 판정).
+   위 선은 그림 바로 위(이름 줄 끝)까지 길게 유지 (사용자 확정) */
+.chords-playhead.gapped {
+  background: linear-gradient(
+    to bottom,
+    #fff 0,
+    #fff 26px,
+    transparent 26px,
+    transparent 86px,
+    #fff 86px,
+    #fff 100%
+  );
+}
+
 
 .chords-playhead::after {
   content: '';

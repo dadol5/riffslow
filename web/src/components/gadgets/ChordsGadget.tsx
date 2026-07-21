@@ -80,6 +80,17 @@ function ChordsGadget({
     setDragging(false)
   }
 
+  // 플레이헤드(중앙 세로선)가 운지 그림 위를 지나는 동안만 선 가운데를 뚫음 (그림이 없으면 온전한 선)
+  // 그림은 시작 눈금 오른쪽에 붙음: x = 시작 ~ +49px(그림 폭 — 패딩 2px는 -2px 보정으로 상쇄)
+  // 판정은 가장자리보다 4px 안쪽 — 스트립 transform 트랜지션(90ms)이 늦게 따라와서
+  // 가장자리 기준이면 진입 전에 미리 뚫린 것처럼 보임 (그림 테두리 여백이라 안 가려짐)
+  const gapped = (chords ?? []).some((seg, i) => {
+    const room = (((chords ?? [])[i + 1]?.start ?? seg.end) - seg.start) * PX_PER_SEC
+    if (room < MIN_DIAGRAM_PX) return false // 이 코드는 운지 그림이 없음
+    const dx = (position - seg.start) * PX_PER_SEC
+    return dx > 4 && dx < 45
+  })
+
   // 타임라인을 그릴 수 없는 상태들 — 안내 문구만
   if (!hasTrack || analyzing || chords == null || chords.length === 0) {
     let text: string
@@ -135,8 +146,9 @@ function ChordsGadget({
         })}
       </div>
 
-      {/* 중앙 고정 플레이헤드 (세로선 + 기준선 위의 점) */}
-      <div className="chords-playhead" />
+      {/* 중앙 고정 플레이헤드 (세로선 + 기준선 위의 점) — 운지 그림 위를 지날 땐 그림 구간 뚫림,
+          코드 이름은 z-index로 선 위에 올라가 글자 획이 자연스럽게 선을 덮음 */}
+      <div className={`chords-playhead${gapped ? ' gapped' : ''}`} />
     </div>
   )
 }
