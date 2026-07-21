@@ -7,6 +7,8 @@
 // - 위치 = stretchNode.inputTime (원곡 기준 초 — setUpdateInterval 주기로 갱신됨)
 
 import SignalsmithStretch, { type StretchNode } from 'signalsmith-stretch'
+import { strum, strumShape } from './guitar'
+import type { Shape } from '../utils/voicings'
 
 // 템포 범위 (원본 앱과 동일: 20% ~ 250%)
 export const MIN_TEMPO = 0.2
@@ -386,6 +388,27 @@ export class Player {
     })
   }
 
+  // 곡 언로드: 현재 곡을 완전히 내려놓고 엔진을 빈 상태로 (현재 곡이 목록에서 삭제될 때)
+  async unload(): Promise<void> {
+    const seq = ++this.loadSeq // 진행 중이던 로드/스템 재합성은 전부 무효
+    this.remixToken++
+    this.pause()
+    this.loops = []
+    this.setTrackMarkers(null, null)
+    this.stemData = null // 보관하던 스템 데이터도 메모리에서 놓아줌
+    this.stemGains = []
+    this.audioBuffer_ = null
+    this.duration_ = 0
+    await this.runExclusive(async () => {
+      if (seq !== this.loadSeq) return // 그 사이 새 곡 로드가 시작됐으면 노드는 건드리지 않음
+      const node = this.stretchNode
+      if (!node) return
+      await node.dropBuffers() // 샘플 전부 제거 (시간축도 0으로 리셋됨)
+      await node.schedule({ active: false, input: 0 })
+      console.log('곡 언로드 완료: 엔진 비움')
+    })
+  }
+
   // 분석용 합성: 스템별 가중치로 합친 AudioBuffer를 반환 (스템 곡이 아니면 null)
   // 용도 = 코드 분석은 드럼 제거+보컬 감량(크로마 오염 억제), BPM 분석은 드럼만(비트의 근원)
   async buildAnalysisMix(weight: (name: string) => number): Promise<AudioBuffer | null> {
@@ -522,6 +545,34 @@ export class Player {
   set pitchSemitones(value: number) {
     this._pitch = Math.max(-12, Math.min(value, 12))
     this.stretchNode?.schedule({ semitones: this._pitch })
+  }
+
+  // 코드 미리듣기: 코드명 운지 그대로 기타 스트럼 (마스터 볼륨 경유)
+  // shape를 주면 그 운지로 냄 (코드표 레이어의 포지션별 미리듣기)
+  // 일시정지 상태에서만 낼지 등의 판단은 호출부(App)가 함
+  strumChord(chord: string, shape?: Shape): void {
+    this.ensureContext() // 코드 탭 = 사용자 제스처 — 잠든 컨텍스트 깨우기 겸
+    const ctx = this.ctx
+    if (!ctx || !this.gain) return
+    const doStrum = (c: AudioContext, dest: AudioNode) =>
+      shape ? strumShape(c, dest, shape) : strum(c, dest, chord)
+    doStrum(ctx, this.gain)
+
+    // 좀비 컨텍스트 감지: 다른 앱이 오디오 세션을 뺏었다 돌아오면 state는 running인데
+    // 실제론 죽어서 무음이 됨 — 재생 중엔 checkPosition(1초 정지)이 잡지만,
+    // 일시정지 중 코드 탭은 그 경로를 안 타므로 여기서 직접 확인 (정상일 땐 지연 없이 이미 소리 남)
+    const t0 = ctx.currentTime
+    setTimeout(() => {
+      void (async () => {
+        if (this.ctx !== ctx) return // 그 사이 파이프라인이 재생성됨 — 새 컨텍스트는 정상
+        if (ctx.state === 'running' && ctx.currentTime > t0) return // 정상 — 소리 나갔음
+        console.warn(
+          `코드 미리듣기 무음 감지 (state=${ctx.state}, currentTime 정지) → 파이프라인 재생성 후 다시 튕김`,
+        )
+        await this.rebuildPipeline(this.position)
+        if (this.ctx && this.gain) doStrum(this.ctx, this.gain)
+      })()
+    }, 150)
   }
 
   play(): void {

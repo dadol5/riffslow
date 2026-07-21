@@ -14,6 +14,9 @@ import { analyzeBpm } from './audio/bpm'
 import { analyzeChords, type ChordSegment } from './audio/chords'
 import { guessStemName, mixStemsToWav, stemSetTitle, STEM_ORDER } from './audio/stems'
 import MixerSheet from './components/MixerSheet'
+import VoicingsSheet from './components/VoicingsSheet'
+import { shapeMatches, type Shape } from './utils/voicings'
+import { transposeName } from './utils/music'
 import { keepScreenAwake } from './utils/wakeLock'
 import {
   addTrack,
@@ -203,7 +206,19 @@ function App() {
     const result = await analyzeChords(buffer, beatGrid)
     if (currentIdRef.current !== trackId) return
     setChordsAnalyzing(false)
-    setChords(result?.segments ?? null)
+    // 구간별로 고른 운지("이 구간만")는 재분석이 타임라인을 새로 만들어도 유지 —
+    // 시간이 겹치고 코드가 같은 새 구간에 이식 (코드가 달라졌으면 운지가 안 맞으니 버림)
+    setChords((prev) => {
+      if (!result) return null
+      const withShapes = (prev ?? []).filter((s) => s.shape)
+      if (withShapes.length === 0) return result.segments
+      return result.segments.map((n) => {
+        const old = withShapes.find(
+          (o) => o.chord === n.chord && o.start < n.end && n.start < o.end,
+        )
+        return old ? { ...n, shape: old.shape } : n
+      })
+    })
     setSongKey(result?.key ?? null)
     setChordsVer(CHORDS_ANALYSIS_VERSION)
     if (result) {
@@ -217,6 +232,56 @@ function App() {
       )
       console.log(`앞부분 진행: ${preview}`)
     }
+  }
+
+  // 코드 탭 미리듣기: 일시정지 상태에서만 기타 스트럼 (재생 중엔 음악과 겹치니 무음 — 사용자 결정)
+  // 코드명은 표시 조 기준으로 받음 — 피치를 옮겼으면 옮긴 조의 소리가 남 (화면과 일치)
+  // shape = 그 코드에 적용된 운지 (고른 게 있으면 그 자리 소리로)
+  const handleChordPreview = (chord: string, shape?: Shape) => {
+    if (isPlaying) return
+    player.strumChord(chord, shape)
+  }
+
+  // 코드별로 고른 운지 ("같은 코드 전부 적용" — 키 = 표시 조 코드명, 곡별 저장)
+  const [chordShapes, setChordShapes] = useState<Record<string, Shape>>({})
+
+  // 코드표 레이어: 선택된 코드를 한 번 더 탭하면 열림 (코드명 = 표시 조, segIndex = 원본 구간)
+  const [voicingsTarget, setVoicingsTarget] = useState<{ chord: string; segIndex: number } | null>(
+    null,
+  )
+
+  // 레이어가 열린 구간에 지금 적용돼 있는 운지 (없으면 null = 기본 운지)
+  const voicingsCurrent = (() => {
+    if (voicingsTarget === null || chords == null) return null
+    const seg = chords[voicingsTarget.segIndex]
+    if (seg?.shape && shapeMatches(seg.shape, voicingsTarget.chord)) return seg.shape
+    return chordShapes[voicingsTarget.chord] ?? null
+  })()
+
+  // 레이어에서 운지 탭 = 그 포지션 운지로 미리듣기 (미리듣기와 같은 일시정지 가드)
+  const handleVoicingTap = (shape: Shape) => {
+    if (isPlaying || voicingsTarget === null) return
+    player.strumChord(voicingsTarget.chord, shape)
+  }
+
+  // 레이어 [확인] = 고른 운지로 변경
+  // applyAll = 이 곡의 같은 코드 전부 (구간별 개별 지정은 정리) / 아니면 탭한 구간만
+  const handleVoicingApply = (shape: Shape, applyAll: boolean) => {
+    const target = voicingsTarget
+    if (target === null || chords == null) return
+    if (applyAll) {
+      setChordShapes((m) => ({ ...m, [target.chord]: shape }))
+      setChords(
+        chords.map((s) =>
+          s.shape && transposeName(s.chord, pitch) === target.chord
+            ? { ...s, shape: undefined }
+            : s,
+        ),
+      )
+    } else {
+      setChords(chords.map((s, i) => (i === target.segIndex ? { ...s, shape } : s)))
+    }
+    setVoicingsTarget(null)
   }
 
   // ── 페이지 스와이프: 손가락을 따라 실시간으로 끌리고, 놓으면 스냅 ──
@@ -327,11 +392,12 @@ function App() {
         chords,
         songKey,
         chordsVer,
+        chordShapes,
         stemMix,
       })
     }, 300)
     return () => clearTimeout(timer) // 300ms 안에 또 바뀌면 이전 예약 취소 (디바운스)
-  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset, bpmVer, chords, songKey, chordsVer, stemMix])
+  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset, bpmVer, chords, songKey, chordsVer, chordShapes, stemMix])
 
   // 곡이 끝까지 재생되면 엔진이 알려줌 → 화면 상태 되돌리기
   useEffect(() => {
@@ -755,6 +821,8 @@ function App() {
       setSongKey(s.songKey)
       setChordsVer(s.chordsVer ?? 1)
       setChordsAnalyzing(false)
+      setChordShapes(s.chordShapes ?? {}) // 코드별로 고른 운지 복원
+      setVoicingsTarget(null)
       // 스템 믹서 복원 (볼륨/뮤트는 곡별 저장, 솔로는 세션 한정이라 초기화)
       setStemMix(s.stemMix ?? {})
       setSoloStems(new Set())
@@ -809,7 +877,36 @@ function App() {
     await deleteTrack(meta.id)
     setTracks(await getAllTracks())
     if (currentId === meta.id) {
-      setCurrentId(null) // 현재 곡이면 라이브러리 연결만 해제 (재생 중이면 유지)
+      // 현재 곡이면 플레이어를 비우고 화면 상태 전부 초기화 (삭제된 곡이 화면에 남지 않게)
+      await player.unload()
+      setCurrentId(null)
+      setFileName(null)
+      setIsPlaying(false)
+      setPosition(0)
+      setDuration(0)
+      setTempo(100)
+      player.tempo = 1
+      setPitch(0)
+      player.pitchSemitones = 0
+      setLoops([])
+      setPosMarkers([])
+      setTrackS(null)
+      setTrackE(null)
+      setBpm(undefined)
+      setBpmOffset(null)
+      setBpmVer(BPM_ANALYSIS_VERSION)
+      setBpmAnalyzing(false)
+      setMetroOn(false)
+      setChords(undefined)
+      setSongKey(undefined)
+      setChordsVer(CHORDS_ANALYSIS_VERSION)
+      setChordsAnalyzing(false)
+      setStemMix({})
+      setSoloStems(new Set())
+      setShowMixer(false)
+      setChordShapes({})
+      setVoicingsTarget(null)
+      localStorage.removeItem(LAST_TRACK_KEY) // 다음 실행 때 삭제된 곡을 복원하려 들지 않게
     }
   }
 
@@ -968,7 +1065,10 @@ function App() {
                 ? Math.max(0, position - player.playbackLatency * (tempo / 100))
                 : position
             }
+            chordShapes={chordShapes}
             onSeek={handleSeek}
+            onPreview={handleChordPreview}
+            onShowVoicings={(chord, segIndex) => setVoicingsTarget({ chord, segIndex })}
           />
         )}
         {activeGadget === 'bpm' && (
@@ -1023,6 +1123,17 @@ function App() {
           onToggleMute={handleStemMute}
           onToggleSolo={handleStemSolo}
           onClose={() => setShowMixer(false)}
+        />
+      )}
+
+      {/* 코드표 레이어 — 선택된 코드를 한 번 더 탭하면 운지 포지션 목록 + 운지 변경 */}
+      {voicingsTarget !== null && (
+        <VoicingsSheet
+          chord={voicingsTarget.chord}
+          currentShape={voicingsCurrent}
+          onTapShape={handleVoicingTap}
+          onApply={handleVoicingApply}
+          onClose={() => setVoicingsTarget(null)}
         />
       )}
 

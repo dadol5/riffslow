@@ -8,6 +8,7 @@
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import type { ChordSegment } from '../audio/chords'
+import type { Shape } from '../utils/voicings'
 
 // 구간 루프: 여러 개 존재 가능, end가 null이면 시작점만 찍힌 미완성 루프
 export interface Loop {
@@ -32,6 +33,9 @@ export interface TrackSettings {
   chords?: ChordSegment[] | null
   songKey?: string | null // 예: "C minor"
   chordsVer?: number // 분석 로직 버전 — 로직이 개선되면 낮은 버전 데이터는 자동 재분석
+  // 코드별로 고른 운지 (코드표 레이어 "같은 코드 전부 적용" — 키 = 표시 조 기준 코드명)
+  // 구간별 지정(ChordSegment.shape)과 달리 재분석해도 유지됨
+  chordShapes?: Record<string, Shape>
   // 스템 믹서 상태 (스템 이름 → 볼륨 0~1 / 뮤트) — 솔로는 세션 한정이라 저장 안 함
   stemMix?: Record<string, { volume: number; muted: boolean }>
 }

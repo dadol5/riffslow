@@ -10,11 +10,14 @@
 // (합성 테스트로 확인) → 이 워커는 반드시 요청 1회 처리 후 terminate (chords.ts가 보장)
 import { EssentiaWASM } from 'essentia.js/dist/essentia-wasm.es.js'
 import Essentia from 'essentia.js/dist/essentia.js-core.es.js'
+import type { Shape } from '../utils/voicings'
 
 export interface ChordSegment {
   start: number // 구간 시작 (초)
   end: number // 구간 끝 (초)
   chord: string // 코드명 (플랫 표기: C, Cm, Bb, Abm ... — v10부터, 이전 저장분은 샤프일 수 있음)
+  // 이 구간만 따로 지정한 운지 (코드표 레이어에서 "구간만 적용" — 분석기는 안 채움, 재분석하면 사라짐)
+  shape?: Shape
 }
 
 export interface AnalyzeRequest {

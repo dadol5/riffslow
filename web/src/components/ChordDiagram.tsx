@@ -1,109 +1,7 @@
 // 기타 코드 운지 다이어그램 (SVG) — 코드명("C", "A#m")으로 운지를 계산해 그림
-//
-// 운지 결정 규칙:
-// 1) 흔한 오픈 코드는 사전(OPEN_SHAPES)의 표준 운지 사용
-// 2) 나머지는 바레 코드 자동 생성: E폼(6번줄 루트)과 A폼(5번줄 루트) 중 낮은 프렛 선택
-//
-// 표기: 프렛 배열은 6번줄(굵은 저음줄)→1번줄 순서, -1 = 뮤트(×), 0 = 개방(○)
+// 운지 계산(사전/바레 생성/여러 포지션)은 utils/voicings.ts가 담당 — 여기는 그리기만
 import { memo } from 'react'
-
-// 샤프/플랫 둘 다 파싱 (표기는 v10부터 플랫 기준, 구버전 저장 데이터는 샤프일 수 있음)
-const NOTE_PC: Record<string, number> = {
-  C: 0, 'C#': 1, Db: 1, D: 2, 'D#': 3, Eb: 3, E: 4, F: 5, 'F#': 6, Gb: 6,
-  G: 7, 'G#': 8, Ab: 8, A: 9, 'A#': 10, Bb: 10, B: 11,
-}
-
-interface Shape {
-  frets: number[] // 6줄 (6번줄→1번줄), 절대 프렛
-  barre?: { fret: number; from: number; to: number } // 바레: from~to 줄 인덱스(0=6번줄)
-}
-
-// 흔한 오픈 코드 표준 운지 (키: "근음pc-m|M")
-const OPEN_SHAPES: Record<string, Shape> = {
-  '0-M': { frets: [-1, 3, 2, 0, 1, 0] }, // C
-  '9-M': { frets: [-1, 0, 2, 2, 2, 0] }, // A
-  '7-M': { frets: [3, 2, 0, 0, 0, 3] }, // G
-  '4-M': { frets: [0, 2, 2, 1, 0, 0] }, // E
-  '2-M': { frets: [-1, -1, 0, 2, 3, 2] }, // D
-  '5-M': { frets: [1, 3, 3, 2, 1, 1], barre: { fret: 1, from: 0, to: 5 } }, // F
-  '9-m': { frets: [-1, 0, 2, 2, 1, 0] }, // Am
-  '4-m': { frets: [0, 2, 2, 0, 0, 0] }, // Em
-  '2-m': { frets: [-1, -1, 0, 2, 3, 1] }, // Dm
-}
-
-// 흔한 오픈 도미넌트 7th 운지 (키: 근음pc)
-const SEVENTH_OPEN: Record<number, Shape> = {
-  9: { frets: [-1, 0, 2, 0, 2, 0] }, // A7
-  11: { frets: [-1, 2, 1, 2, 0, 2] }, // B7
-  0: { frets: [-1, 3, 2, 3, 1, 0] }, // C7
-  2: { frets: [-1, -1, 0, 2, 1, 2] }, // D7
-  4: { frets: [0, 2, 0, 1, 0, 0] }, // E7
-  7: { frets: [3, 2, 0, 0, 0, 1] }, // G7
-}
-
-// 흔한 오픈 마이너 7th 운지 (키: 근음pc)
-const MIN7_OPEN: Record<number, Shape> = {
-  9: { frets: [-1, 0, 2, 0, 1, 0] }, // Am7
-  4: { frets: [0, 2, 0, 0, 0, 0] }, // Em7
-  2: { frets: [-1, -1, 0, 2, 1, 1] }, // Dm7
-}
-
-// 마이너 7th 바레 자동 생성 (Em7폼/Am7폼 중 낮은 프렛)
-function barreM7Shape(rootPc: number): Shape {
-  const fE = (rootPc - NOTE_PC.E + 12) % 12 || 12
-  const fA = (rootPc - NOTE_PC.A + 12) % 12 || 12
-  if (fE <= fA) {
-    const f = fE
-    return { frets: [f, f + 2, f, f, f, f], barre: { fret: f, from: 0, to: 5 } }
-  }
-  const f = fA
-  return { frets: [-1, f, f + 2, f, f + 1, f], barre: { fret: f, from: 1, to: 5 } }
-}
-
-// 도미넌트 7th 바레 자동 생성 (E7폼/A7폼 중 낮은 프렛)
-function barre7Shape(rootPc: number): Shape {
-  const fE = (rootPc - NOTE_PC.E + 12) % 12 || 12
-  const fA = (rootPc - NOTE_PC.A + 12) % 12 || 12
-  if (fE <= fA) {
-    const f = fE
-    return { frets: [f, f + 2, f, f + 1, f, f], barre: { fret: f, from: 0, to: 5 } }
-  }
-  const f = fA
-  return { frets: [-1, f, f + 2, f, f + 2, f], barre: { fret: f, from: 1, to: 5 } }
-}
-
-// 바레 코드 자동 생성 (E폼/A폼 중 낮은 프렛)
-function barreShape(rootPc: number, minor: boolean): Shape {
-  const fE = (rootPc - NOTE_PC.E + 12) % 12 || 12 // 6번줄 루트 프렛 (0이면 12프렛으로)
-  const fA = (rootPc - NOTE_PC.A + 12) % 12 || 12 // 5번줄 루트 프렛
-  if (fE <= fA) {
-    const f = fE
-    return {
-      frets: minor ? [f, f + 2, f + 2, f, f, f] : [f, f + 2, f + 2, f + 1, f, f],
-      barre: { fret: f, from: 0, to: 5 },
-    }
-  }
-  const f = fA
-  return {
-    frets: minor ? [-1, f, f + 2, f + 2, f + 1, f] : [-1, f, f + 2, f + 2, f + 2, f],
-    barre: { fret: f, from: 1, to: 5 },
-  }
-}
-
-// 코드명 파싱 → 운지 (모르는 형식이면 null)
-function shapeFor(chord: string): Shape | null {
-  const seventh = chord.endsWith('7') // 7th (분석기는 "X7"/"Xm7"을 냄)
-  const base = seventh ? chord.slice(0, -1) : chord
-  const minor = base.endsWith('m')
-  const rootName = minor ? base.slice(0, -1) : base
-  const pc = NOTE_PC[rootName]
-  if (pc === undefined) return null
-  if (seventh) {
-    if (minor) return MIN7_OPEN[pc] ?? barreM7Shape(pc)
-    return SEVENTH_OPEN[pc] ?? barre7Shape(pc)
-  }
-  return OPEN_SHAPES[`${pc}-${minor ? 'm' : 'M'}`] ?? barreShape(pc, minor)
-}
+import { shapeFor, type Shape } from '../utils/voicings'
 
 // SVG 좌표 상수
 const STR_X0 = 12 // 첫 줄(6번줄) x
@@ -114,11 +12,12 @@ const FRETS_SHOWN = 4
 
 interface ChordDiagramProps {
   chord: string // 예: "C", "A#m"
+  shape?: Shape // 지정하면 이 운지를 그대로 그림 (코드표 레이어의 포지션별 표시용) — 미지정 = 대표 운지
 }
 
 // memo: 타임라인이 재생 위치마다 리렌더돼도 다이어그램은 코드명이 같으면 재계산 안 함
-const ChordDiagram = memo(function ChordDiagram({ chord }: ChordDiagramProps) {
-  const shape = shapeFor(chord)
+const ChordDiagram = memo(function ChordDiagram({ chord, shape: shapeProp }: ChordDiagramProps) {
+  const shape = shapeProp ?? shapeFor(chord)
   if (!shape) return null
 
   // 표시 시작 프렛: 운지 중 가장 낮은 프렛(1 이상) — 1이면 너트부터

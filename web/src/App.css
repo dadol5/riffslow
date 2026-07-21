@@ -1031,6 +1031,148 @@
   filter: var(--glow-text);
 }
 
+/* ── 코드표 레이어: 선택된 코드 한 번 더 탭 → 운지 포지션 목록 (가로 스크롤) ── */
+.voicings-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.6);
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  animation: slide-up 0.25s ease;
+}
+
+.voicings-scroll {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 2px 4px;
+}
+
+/* 포지션 한 칸 = 운지 그림 + 순번 (탭 = 그 운지로 미리듣기) */
+.voicing-cell {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 6px 4px;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.voicing-cell:active {
+  border-color: var(--neon);
+  color: var(--neon);
+}
+
+/* 선택된 포지션 (열릴 땐 현재 적용 운지가 선택 상태) — 네온 발광 */
+.voicing-cell.selected {
+  border-color: var(--neon);
+  color: var(--neon);
+  filter: var(--glow-text);
+}
+
+.voicing-cell .chord-diagram {
+  height: 84px;
+}
+
+.voicing-pos {
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+/* 하단 버튼 줄: [같은 코드 전부(토글)] [확인] */
+.voicings-footer {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0 2px;
+}
+
+.voicings-all {
+  flex: 1;
+  padding: 10px 0;
+  background: none;
+  border: 1px solid var(--text-dim);
+  border-radius: 10px;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.voicings-all.on {
+  border-color: var(--neon);
+  color: var(--neon);
+  filter: var(--glow-text);
+}
+
+.voicings-apply {
+  flex: 1;
+  padding: 10px 0;
+  background: none;
+  border: 1px solid var(--neon);
+  border-radius: 10px;
+  color: var(--neon);
+  font-size: 14px;
+  letter-spacing: 2px;
+  filter: var(--glow-text);
+  cursor: pointer;
+}
+
+.voicings-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: center;
+  padding: 6px 0 2px;
+}
+
+.voicings-empty {
+  color: var(--text-dim);
+  text-align: center;
+  padding: 24px 0;
+}
+
+/* 선택된 코드 표시: 마지막에 탭한 코드 이름 주위 네온 테두리 링 (다른 코드 탭까지 유지)
+   outline은 레이아웃을 안 밀어서 이름 중앙 정렬/그림 위치에 영향 없음 */
+.chord-item .chord-name.selected {
+  color: var(--neon);
+  filter: var(--glow-text);
+  border-radius: 6px;
+  outline: 1px solid var(--neon);
+  outline-offset: 3px;
+}
+
+/* 코드 탭 피드백: 탭한 코드 이름이 네온으로 확 밝아지며 살짝 커졌다 가라앉음 ("눌렸다" 표시)
+   ⚠️ transform에 기존 translateX(중앙 정렬 보정)를 반드시 함께 유지할 것 */
+.chord-item .chord-name.tapped {
+  animation: chord-tap-pulse 0.5s ease-out;
+}
+
+@keyframes chord-tap-pulse {
+  0% {
+    color: var(--neon);
+    text-shadow:
+      0 0 6px var(--neon),
+      0 0 14px var(--neon),
+      0 0 26px var(--neon);
+    transform: translateX(calc(-50% - 2px)) scale(1.35);
+  }
+  100% {
+    transform: translateX(calc(-50% - 2px)) scale(1);
+  }
+}
+
 /* 중앙 고정 플레이헤드: 가는 세로선 + 기준선 위의 점 */
 .chords-playhead {
   position: absolute;
