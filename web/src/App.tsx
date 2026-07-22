@@ -15,7 +15,7 @@ import { analyzeChords, type ChordSegment } from './audio/chords'
 import { guessStemName, mixStemsToWav, stemSetTitle, STEM_ORDER } from './audio/stems'
 import MixerSheet from './components/MixerSheet'
 import VoicingsSheet from './components/VoicingsSheet'
-import { shapeMatches, type Shape } from './utils/voicings'
+import { shapeFor, shapeMatches, type Shape } from './utils/voicings'
 import { transposeName } from './utils/music'
 import { keepScreenAwake } from './utils/wakeLock'
 import {
@@ -146,12 +146,18 @@ function App() {
     currentIdRef.current = currentId
   }, [currentId])
 
+  // 수동 BPM 편집 세대 — 백그라운드 분석이 도는 사이 사용자가 값을 직접 설정하면(탭 템포/± 조절)
+  // 늦게 끝난 분석 결과가 수동 값을 덮어쓰지 않게 세대 비교로 폐기
+  const bpmEditSeqRef = useRef(0)
+  const manualBpmRef = useRef<{ bpm: number; offset: number | null } | null>(null)
+
   // BPM 자동 분석 (로드 완료 후 백그라운드 실행 — 재생/UI를 막지 않음)
   // 결과를 반환해서 후속 코드 분석이 박 정렬 그리드로 바로 쓸 수 있게 함 (state는 반영이 늦음)
   const runBpmAnalysis = async (trackId: number) => {
     const base = player.audioBuffer
     if (!base) return null
     setBpmAnalyzing(true)
+    const editSeq = bpmEditSeqRef.current // 분석 시작 시점의 수동 편집 세대
     // 스템 곡이면 드럼 스템만으로 분석 (비트의 근원 — 재구성 믹스보다 정확)
     // 드럼 스템이 없거나 드럼 기반 분석이 실패하면 전체 믹스로 폴백
     const drums = await player.buildAnalysisMix((n) => (n === 'drums' ? 1 : 0))
@@ -163,6 +169,12 @@ function App() {
     // 분석 도중 다른 곡으로 바뀌었으면 결과 폐기 (그 곡의 로드 흐름이 상태를 관리)
     if (currentIdRef.current !== trackId) return null
     setBpmAnalyzing(false)
+    // 분석 도중 사용자가 값을 직접 설정했으면(탭 템포/± 조절) 수동 값 우선 — 분석 결과 폐기
+    if (bpmEditSeqRef.current !== editSeq) {
+      console.log('BPM 분석 결과 폐기: 분석 중 사용자가 값을 직접 설정함')
+      const m = manualBpmRef.current
+      return m && m.offset != null ? { bpm: m.bpm, offset: m.offset } : null
+    }
     setBpm(result?.bpm ?? null) // 실패는 null 저장 → 다음 로드 때 재분석됨
     setBpmOffset(result?.offset ?? null)
     setBpmVer(BPM_ANALYSIS_VERSION)
@@ -183,6 +195,8 @@ function App() {
   const [songKey, setSongKey] = useState<string | null | undefined>(undefined)
   const [chordsVer, setChordsVer] = useState(CHORDS_ANALYSIS_VERSION)
   const [chordsAnalyzing, setChordsAnalyzing] = useState(false)
+  // 코드를 수동으로 수정한 곡인지 — true면 분석 로직 업그레이드에도 자동 재분석 안 함 (수정 보존)
+  const [chordsEdited, setChordsEdited] = useState(false)
 
   // 코드/KEY 자동 분석 (워커에서 수행 — 수~수십 초 걸리지만 UI/재생에 영향 없음)
   // beatGrid가 있으면 코드 경계가 박자에 정렬됨
@@ -234,11 +248,28 @@ function App() {
     }
   }
 
-  // 코드 탭 미리듣기: 일시정지 상태에서만 기타 스트럼 (재생 중엔 음악과 겹치니 무음 — 사용자 결정)
+  // ── 재생 중 코드 소리 설정 (앱 전역 — localStorage 유지, 코드표 레이어에서 토글) ──
+  // strumWhilePlaying: 켜면 재생 중에도 코드 탭 소리가 음악 위에 겹쳐서 남
+  // autoStrum: 켜면 재생 중 코드가 바뀌는 지점마다 자동으로 그 코드(적용 운지) 스트럼
+  const [strumWhilePlaying, setStrumWhilePlaying] = useState(
+    () => localStorage.getItem('riffslow-strum-playing') === '1',
+  )
+  const [autoStrum, setAutoStrum] = useState(
+    () => localStorage.getItem('riffslow-strum-auto') === '1',
+  )
+  useEffect(() => {
+    localStorage.setItem('riffslow-strum-playing', strumWhilePlaying ? '1' : '0')
+  }, [strumWhilePlaying])
+  useEffect(() => {
+    localStorage.setItem('riffslow-strum-auto', autoStrum ? '1' : '0')
+  }, [autoStrum])
+
+  // 코드 탭 미리듣기: 기본은 일시정지 상태에서만 기타 스트럼 (재생 중엔 음악과 겹치니 무음)
+  // — "재생 중 탭 소리" 토글을 켜면 재생 중에도 남
   // 코드명은 표시 조 기준으로 받음 — 피치를 옮겼으면 옮긴 조의 소리가 남 (화면과 일치)
   // shape = 그 코드에 적용된 운지 (고른 게 있으면 그 자리 소리로)
   const handleChordPreview = (chord: string, shape?: Shape) => {
-    if (isPlaying) return
+    if (isPlaying && !strumWhilePlaying) return
     player.strumChord(chord, shape)
   }
 
@@ -258,29 +289,85 @@ function App() {
     return chordShapes[voicingsTarget.chord] ?? null
   })()
 
-  // 레이어에서 운지 탭 = 그 포지션 운지로 미리듣기 (미리듣기와 같은 일시정지 가드)
-  const handleVoicingTap = (shape: Shape) => {
-    if (isPlaying || voicingsTarget === null) return
-    player.strumChord(voicingsTarget.chord, shape)
+  // 레이어에서 운지 탭 = 그 코드/운지로 미리듣기 (코드 탭 미리듣기와 같은 가드)
+  // chord = 레이어에서 보고 있는 코드 (칩/검색으로 다른 코드로 전환했을 수 있음)
+  const handleVoicingTap = (shape: Shape, chord: string) => {
+    if (isPlaying && !strumWhilePlaying) return
+    player.strumChord(chord, shape)
   }
 
-  // 레이어 [확인] = 고른 운지로 변경
+  // 재생 중 코드 자동 스트럼: 코드가 바뀌는 지점마다 그 코드(적용 운지)로 기타 소리
+  // 재생 시작/시크 직후 첫 판정은 건너뛰고 "전환"에만 울림 (중간부터 갑자기 안 울리게)
+  const autoStrumIdxRef = useRef(-1)
+  const autoStrumTimeRef = useRef(0) // 마지막 자동 스트럼 시각 (과발화 방지)
+  useEffect(() => {
+    if (!isPlaying || !autoStrum || chords == null || chords.length === 0) {
+      autoStrumIdxRef.current = -1
+      return
+    }
+    // 화면 표시와 같은 "지금 들리는 소리" 기준 위치 (엔진 지연 보정)
+    const pos = Math.max(0, position - player.playbackLatency * (tempo / 100))
+    const idx = chords.findIndex((s) => pos >= s.start && pos < s.end)
+    if (idx === autoStrumIdxRef.current) return
+    const prev = autoStrumIdxRef.current
+    autoStrumIdxRef.current = idx
+    if (idx < 0 || prev === -1) return
+    // 시크 직후 엔진 위치가 잠깐 튀며 전환 판정이 연달아 발화하는 것 방지 (300ms 안 연타 무시)
+    const now = performance.now()
+    if (now - autoStrumTimeRef.current < 300) return
+    autoStrumTimeRef.current = now
+    const seg = chords[idx]
+    const shown = transposeName(seg.chord, pitch)
+    const shape =
+      (seg.shape && shapeMatches(seg.shape, shown) ? seg.shape : undefined) ?? chordShapes[shown]
+    player.strumChord(shown, shape)
+  }, [position, isPlaying, autoStrum, chords, chordShapes, pitch, tempo, player])
+
+  // 레이어 [확인] = 고른 코드/운지로 변경
+  // newChord = 레이어에서 최종 선택한 코드 (원래 코드와 다르면 코드 자체가 교체됨 — 표시 조 기준)
   // applyAll = 이 곡의 같은 코드 전부 (구간별 개별 지정은 정리) / 아니면 탭한 구간만
-  const handleVoicingApply = (shape: Shape, applyAll: boolean) => {
+  // 1번(대표) 운지를 골랐으면 운지는 "지정 해제"로 동작 — 기본 운지로 되돌리는 유일한 길
+  const handleVoicingApply = (newChord: string, shape: Shape, applyAll: boolean) => {
     const target = voicingsTarget
     if (target === null || chords == null) return
+    const chordChanged = newChord !== target.chord
+    const newRaw = transposeName(newChord, -pitch) // 저장은 원조 기준 (조옮김 표시는 자동 호환)
+    const isDefault = shapeFor(newChord)?.frets.join(',') === shape.frets.join(',')
+    // 폰(eruda) 진단용: 실제 적용 내용/범위 확인
+    console.log(
+      `코드 적용: ${target.chord}${chordChanged ? ` → ${newChord}` : ''} [${shape.frets.join(',')}] ${applyAll ? '전부' : `구간만(#${target.segIndex})`}${isDefault ? ' (기본 운지)' : ''}`,
+    )
     if (applyAll) {
-      setChordShapes((m) => ({ ...m, [target.chord]: shape }))
       setChords(
         chords.map((s) =>
-          s.shape && transposeName(s.chord, pitch) === target.chord
-            ? { ...s, shape: undefined }
+          transposeName(s.chord, pitch) === target.chord
+            ? { ...s, chord: chordChanged ? newRaw : s.chord, shape: undefined }
             : s,
         ),
       )
+      setChordShapes((m) => {
+        const next = { ...m }
+        delete next[target.chord] // 교체 전 코드의 전체 운지 지정은 정리
+        if (isDefault) delete next[newChord]
+        else next[newChord] = shape
+        return next
+      })
     } else {
-      setChords(chords.map((s, i) => (i === target.segIndex ? { ...s, shape } : s)))
+      // 구간만 기본 복귀 시 주의: 이 곡에 "전부 지정"이 남아 있으면 그쪽으로 떨어짐 (지정 우선순위 구조)
+      setChords(
+        chords.map((s, i) =>
+          i === target.segIndex
+            ? {
+                ...s,
+                chord: chordChanged ? newRaw : s.chord,
+                shape: isDefault ? undefined : shape,
+              }
+            : s,
+        ),
+      )
     }
+    // 코드를 바꿨으면 수동 편집 곡으로 표시 — 분석 로직이 업그레이드돼도 재분석이 덮지 않음
+    if (chordChanged) setChordsEdited(true)
     setVoicingsTarget(null)
   }
 
@@ -393,11 +480,12 @@ function App() {
         songKey,
         chordsVer,
         chordShapes,
+        chordsEdited,
         stemMix,
       })
     }, 300)
     return () => clearTimeout(timer) // 300ms 안에 또 바뀌면 이전 예약 취소 (디바운스)
-  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset, bpmVer, chords, songKey, chordsVer, chordShapes, stemMix])
+  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset, bpmVer, chords, songKey, chordsVer, chordShapes, chordsEdited, stemMix])
 
   // 곡이 끝까지 재생되면 엔진이 알려줌 → 화면 상태 되돌리기
   useEffect(() => {
@@ -588,11 +676,18 @@ function App() {
   // BPM ×2/÷2 교정 (자동 분석의 반배/두배 혼동 보정 — 첫 박 위치는 그대로 유효)
   const handleBpmChange = (value: number) => {
     setBpm(value)
+    // 수동 설정 표시 — 진행 중인 백그라운드 분석이 이 값을 덮어쓰지 않게
+    bpmEditSeqRef.current++
+    manualBpmRef.current = { bpm: value, offset: bpmOffset ?? null }
   }
 
   // BPM 자물쇠 토글 (열림 = 100% 기준값 조절 모드, 잠김 = 설정한 값이 100% 기준으로 확정)
+  // 잠금 상태에 따라 가운데 탭 버튼의 역할이 바뀌므로(박자 탭 ↔ BPM 탭) 탭 세션도 초기화
   const handleBpmLockToggle = () => {
     setBpmLocked((locked) => !locked)
+    beatTapsRef.current = []
+    bpmTapsRef.current = []
+    setTapCount(0)
   }
 
   // 메트로놈 토글 (BPM 가젯 — 재생 중 음악 위에 클릭음 얹기)
@@ -656,6 +751,40 @@ function App() {
     if (delta > period / 2) delta -= period
     if (delta < -period / 2) delta += period
     handleOffsetNudge(delta)
+  }
+
+  // ── BPM 탭(탭 템포): 자물쇠 열림 상태에서 박자에 맞춰 탭하면 탭 간격으로 BPM 값을 잡음 ──
+  // 탭 위치가 원곡 시간축이라 배속과 무관. 값과 함께 첫 박(그리드 기준점)도 탭에 정렬 (사용자 결정)
+  // 분석 실패(?) 곡에서도 처음부터 값을 세울 수 있음
+  const bpmTapsRef = useRef<number[]>([]) // 탭 순간 "들리던 소리"의 원곡 시간들
+  const lastBpmTapWallRef = useRef(0)
+
+  const handleBpmTap = () => {
+    if (!isPlaying) return
+    const now = performance.now()
+    // 잠깐(2.5초) 쉬면 새 탭 세션으로 시작
+    if (now - lastBpmTapWallRef.current > 2500) bpmTapsRef.current = []
+    lastBpmTapWallRef.current = now
+
+    const heard = Math.max(0, player.position - player.playbackLatency * (tempo / 100))
+    const taps = bpmTapsRef.current
+    // 시크/루프 복귀로 시간이 거꾸로 가면 간격 계산이 깨지므로 새 세션
+    if (taps.length > 0 && heard <= taps[taps.length - 1]) taps.length = 0
+    taps.push(heard)
+    if (taps.length > 9) taps.shift() // 최근 9탭(간격 8개)만 — 초반 어긋난 탭의 영향 축소
+    setTapCount(taps.length)
+
+    // 3탭(간격 2개)부터 반영: 평균 간격 → BPM (정수 스냅 — 수동 ± 조절과 같은 규칙)
+    if (taps.length < 3) return
+    const meanInterval = (taps[taps.length - 1] - taps[0]) / (taps.length - 1)
+    const newBpm = Math.round(60 / meanInterval)
+    if (newBpm < 20 || newBpm > 400) return // 말이 안 되는 간격은 무시 (연타/실수 보호)
+    setBpm(newBpm)
+    setBpmVer(BPM_ANALYSIS_VERSION) // 수동 확정 값 — 다음 로드 때 자동 재분석이 덮지 않게
+    setBpmOffset(taps[taps.length - 1]) // 첫 박 기준점 = 마지막 탭 위치 (그리드가 탭에 정렬됨)
+    // 수동 설정 표시 — 진행 중인 백그라운드 분석이 이 값을 덮어쓰지 않게
+    bpmEditSeqRef.current++
+    manualBpmRef.current = { bpm: newBpm, offset: taps[taps.length - 1] }
   }
 
   // (앱 내 스템 추출 UI는 제거됨 — 추출은 PC의 UVR로 하는 게 확정 흐름.
@@ -821,6 +950,7 @@ function App() {
       setSongKey(s.songKey)
       setChordsVer(s.chordsVer ?? 1)
       setChordsAnalyzing(false)
+      setChordsEdited(s.chordsEdited === true) // 수동 편집 여부 복원
       setChordShapes(s.chordShapes ?? {}) // 코드별로 고른 운지 복원
       setVoicingsTarget(null)
       // 스템 믹서 복원 (볼륨/뮤트는 곡별 저장, 솔로는 세션 한정이라 초기화)
@@ -833,9 +963,12 @@ function App() {
       const needBpm = s.bpm == null || (s.bpmVer ?? 1) < BPM_ANALYSIS_VERSION
       // 디버그 모드(판정 근거 로그)면 로드할 때마다 강제 재분석 — 로그는 분석 중에만 나오므로
       const chordsDebug = localStorage.getItem('riffslow-chords-debug') === '1'
+      // 코드를 수동 수정한 곡은 재분석이 수정을 덮어쓰므로 건너뜀 (사용자 결정 — 수정 보존 우선)
+      const edited = s.chordsEdited === true && s.chords != null
       // BPM이 다시 분석되면 그리드가 바뀌므로 코드도 새 그리드로 다시 정렬해야 함
       const needChords =
-        s.chords == null || (s.chordsVer ?? 1) < CHORDS_ANALYSIS_VERSION || needBpm || chordsDebug
+        s.chords == null ||
+        (!edited && ((s.chordsVer ?? 1) < CHORDS_ANALYSIS_VERSION || needBpm || chordsDebug))
       if (needBpm || needChords) {
         // 필요한 것만 순차 실행 (동시에 돌리면 폰 CPU 부담)
         void (async () => {
@@ -901,6 +1034,7 @@ function App() {
       setSongKey(undefined)
       setChordsVer(CHORDS_ANALYSIS_VERSION)
       setChordsAnalyzing(false)
+      setChordsEdited(false)
       setStemMix({})
       setSoloStems(new Set())
       setShowMixer(false)
@@ -1084,6 +1218,7 @@ function App() {
             playing={isPlaying}
             tapCount={tapCount}
             onBeatTap={handleBeatTap}
+            onBpmTap={handleBpmTap}
           />
         )}
       </div>
@@ -1131,6 +1266,14 @@ function App() {
         <VoicingsSheet
           chord={voicingsTarget.chord}
           currentShape={voicingsCurrent}
+          sameCount={
+            (chords ?? []).filter((s) => transposeName(s.chord, pitch) === voicingsTarget.chord)
+              .length
+          }
+          strumWhilePlaying={strumWhilePlaying}
+          autoStrum={autoStrum}
+          onToggleStrumWhilePlaying={() => setStrumWhilePlaying((v) => !v)}
+          onToggleAutoStrum={() => setAutoStrum((v) => !v)}
           onTapShape={handleVoicingTap}
           onApply={handleVoicingApply}
           onClose={() => setVoicingsTarget(null)}

@@ -1,9 +1,14 @@
 // 음악 표기 유틸
 
-// 코드/조표 이름의 플랫 문자를 기호로 (표시 전용 — 저장 데이터는 ASCII "Bb" 유지)
-// 예: "Bb" → "B♭", "Bbm" → "B♭m", "Eb major" → "E♭ major"
+// 코드/조표 이름의 플랫 문자를 기호로 + 확장 성질 서픽스를 악보 관행 표기로 (표시 전용 —
+// 저장 데이터는 ASCII "Bb"/"m7b5"/"dim7" 유지, 파싱/운지 계산은 raw 이름 사용)
+// 예: "Bb" → "B♭", "Cm7b5" → "Cm7(♭5)", "Cdim7" → "C°7", "CmMaj7" → "Cm(Maj7)"
 export function prettyChord(name: string): string {
-  return name.replace(/([A-G])b/g, '$1♭')
+  return name
+    .replace(/([A-G])b/g, '$1♭')
+    .replace('mMaj7', 'm(Maj7)')
+    .replace('m7b5', 'm7(♭5)')
+    .replace('dim7', '°7')
 }
 
 // 조 이동 계산용 (표기는 플랫 기준, 구버전 저장 데이터의 샤프도 파싱)

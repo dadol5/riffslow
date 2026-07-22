@@ -1093,33 +1093,145 @@
   letter-spacing: 1px;
 }
 
-/* 하단 버튼 줄: [같은 코드 전부(토글)] [확인] */
-.voicings-footer {
-  display: flex;
-  gap: 10px;
-  padding: 8px 0 2px;
+/* 시트 헤더(코드 수정): [코드 칩들][🔍][✕] — 칩이 많으면 가로 스크롤 */
+.voicings-header {
+  gap: 8px;
 }
 
-.voicings-all {
+.chord-chips {
   flex: 1;
-  padding: 10px 0;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 코드 칩: 현재 보는 코드 = 네온 채움 (참고 앱의 알약 선택 스타일) */
+.chord-chip {
+  flex-shrink: 0;
+  padding: 6px 13px;
   background: none;
-  border: 1px solid var(--text-dim);
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
   color: var(--text-dim);
   font-size: 13px;
+  font-weight: bold;
   cursor: pointer;
 }
 
-.voicings-all.on {
+.chord-chip.on {
   border-color: var(--neon);
   color: var(--neon);
   filter: var(--glow-text);
 }
 
-.voicings-apply {
+.chord-search-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.chord-search-btn .icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* 검색 입력창 (칩 자리 대체) */
+.chord-search-input {
   flex: 1;
-  padding: 10px 0;
+  min-width: 0;
+  padding: 7px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  /* ⚠️ 16px 미만이면 iOS 사파리가 포커스 시 화면을 자동 확대함 — 줄이지 말 것 */
+  font-size: 16px;
+  outline: none;
+}
+
+.chord-search-input:focus {
+  border-color: var(--neon);
+}
+
+/* 검색 결과 칩 그리드 (세로 스크롤) */
+.chord-search-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 2px;
+}
+
+/* 설정/적용 행: [라벨 ......... 스위치] (참고 앱의 Replace all 줄 스타일) */
+.voicings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 2px;
+}
+
+.voicings-row-label {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.voicings-divider {
+  border-top: 1px solid var(--line);
+  margin: 6px 0 2px;
+}
+
+/* iOS 스타일 토글 스위치 */
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 46px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.switch.on {
+  background: var(--neon);
+  border-color: var(--neon);
+}
+
+.switch.on .switch-knob {
+  transform: translateX(20px);
+  background: #06141a; /* 켜짐 = 네온 트랙 위 어두운 손잡이 (테마 배경 톤) */
+}
+
+.voicings-apply {
+  width: 100%;
+  padding: 11px 0;
+  margin-top: 2px;
   background: none;
   border: 1px solid var(--neon);
   border-radius: 10px;
@@ -1128,13 +1240,6 @@
   letter-spacing: 2px;
   filter: var(--glow-text);
   cursor: pointer;
-}
-
-.voicings-hint {
-  color: var(--text-dim);
-  font-size: 11px;
-  text-align: center;
-  padding: 6px 0 2px;
 }
 
 .voicings-empty {

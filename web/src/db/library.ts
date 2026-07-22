@@ -36,6 +36,8 @@ export interface TrackSettings {
   // 코드별로 고른 운지 (코드표 레이어 "같은 코드 전부 적용" — 키 = 표시 조 기준 코드명)
   // 구간별 지정(ChordSegment.shape)과 달리 재분석해도 유지됨
   chordShapes?: Record<string, Shape>
+  // 코드를 수동으로 수정했는지 — true면 분석 로직이 업그레이드돼도 자동 재분석하지 않음 (수정 보존)
+  chordsEdited?: boolean
   // 스템 믹서 상태 (스템 이름 → 볼륨 0~1 / 뮤트) — 솔로는 세션 한정이라 저장 안 함
   stemMix?: Record<string, { volume: number; muted: boolean }>
 }

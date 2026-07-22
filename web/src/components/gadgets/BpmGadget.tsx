@@ -22,10 +22,12 @@ interface BpmGadgetProps {
   onToggleLock: () => void
   // 첫 박 위치(오프셋) 조정 — 메트로놈 클릭과 코드 타임라인이 함께 이동
   onOffsetNudge: (deltaSec: number) => void
-  // 박자 탭: 재생 중 박자에 맞춰 탭하면 자동 정렬 (3탭부터 반영)
+  // 가운데 탭 버튼 (재생 중에만, 3탭부터 반영):
+  // 잠김 = 박자 탭(오프셋 정렬) / 열림 = BPM 탭(탭 간격으로 값 + 첫 박 동시 설정)
   playing: boolean
   tapCount: number
   onBeatTap: () => void
+  onBpmTap: () => void
 }
 
 function BpmGadget({
@@ -40,6 +42,7 @@ function BpmGadget({
   playing,
   tapCount,
   onBeatTap,
+  onBpmTap,
 }: BpmGadgetProps) {
   // 홀드 반복 중에도 최신 bpm을 읽기 위한 미러 (setInterval 클로저는 prop이 낡기 때문)
   const bpmRef = useRef(bpm)
@@ -178,18 +181,19 @@ function BpmGadget({
         >
           ◀ 10ms
         </button>
+        {/* 잠김 = 박자 탭(오프셋 정렬, 그리드 필요) / 열림 = BPM 탭(값을 새로 잡으므로 그리드 불필요) */}
         <button
           className="bpm-tap-btn"
-          disabled={!canNudge || !playing}
-          onClick={onBeatTap}
+          disabled={!hasTrack || analyzing || !playing || (locked && !canNudge)}
+          onClick={locked ? onBeatTap : onBpmTap}
         >
-          {!playing
-            ? '박자 탭 (재생 중에)'
-            : tapCount >= 3
-              ? `박자 탭 ✓${tapCount}`
-              : tapCount > 0
-                ? `박자 탭 ${tapCount}`
-                : '박자 탭'}
+          {(() => {
+            const name = locked ? '박자 탭' : 'BPM 탭'
+            if (!playing) return `${name} (재생 중에)`
+            if (tapCount >= 3) return `${name} ✓${tapCount}`
+            if (tapCount > 0) return `${name} ${tapCount}`
+            return name
+          })()}
         </button>
         <button
           className="bpm-offset-btn"
