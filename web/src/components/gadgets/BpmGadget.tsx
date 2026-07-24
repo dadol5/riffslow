@@ -23,7 +23,7 @@ interface BpmGadgetProps {
   // 첫 박 위치(오프셋) 조정 — 메트로놈 클릭과 코드 타임라인이 함께 이동
   onOffsetNudge: (deltaSec: number) => void
   // 가운데 탭 버튼 (재생 중에만, 3탭부터 반영):
-  // 잠김 = 박자 탭(오프셋 정렬) / 열림 = BPM 탭(탭 간격으로 값 + 첫 박 동시 설정)
+  // 잠김 = 첫박 탭(마디 1박에 탭 → 오프셋 정렬 + 마디 첫박 지정) / 열림 = BPM 탭(탭 간격으로 값 + 첫 박 동시 설정)
   playing: boolean
   tapCount: number
   onBeatTap: () => void
@@ -181,14 +181,14 @@ function BpmGadget({
         >
           ◀ 10ms
         </button>
-        {/* 잠김 = 박자 탭(오프셋 정렬, 그리드 필요) / 열림 = BPM 탭(값을 새로 잡으므로 그리드 불필요) */}
+        {/* 잠김 = 첫박 탭(마디 1박에 탭 — 오프셋 정렬+첫박 지정, 그리드 필요) / 열림 = BPM 탭(값을 새로 잡으므로 그리드 불필요) */}
         <button
           className="bpm-tap-btn"
           disabled={!hasTrack || analyzing || !playing || (locked && !canNudge)}
           onClick={locked ? onBeatTap : onBpmTap}
         >
           {(() => {
-            const name = locked ? '박자 탭' : 'BPM 탭'
+            const name = locked ? '첫박 탭' : 'BPM 탭'
             if (!playing) return `${name} (재생 중에)`
             if (tapCount >= 3) return `${name} ✓${tapCount}`
             if (tapCount > 0) return `${name} ${tapCount}`

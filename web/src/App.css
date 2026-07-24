@@ -395,10 +395,56 @@
   scroll-padding-left: 12px; /* 스냅 시 좌측 패딩만큼 들여서 정렬 */
 }
 
-/* 마지막 페이지 채움 스페이서: 탭이 4의 배수가 아니어도 페이지 단위로 정확히 스냅되게 */
-.gadget-tabs::after {
-  content: '';
-  flex: 0 0 calc(75% - 18px); /* 탭 3개 자리 (Chords 1개 + 빈자리 3개 = 한 페이지) */
+/* [1박 ▶] 액션 버튼: 2페이지 우측 끝 칸 고정 — margin-left가 빈 탭 칸을 채워
+   페이지 폭을 정확히 4칸으로 맞춤 (기존 ::after 스페이서 대체). 탭과 헷갈리지 않게 알약 모양 */
+.gadget-bar-shift {
+  /* 작은 알약(64px 고정) — 오른쪽 끝이 페이지 끝과 일치하도록 margin이 나머지를 채움:
+     Chords 탭 뒤 페이지 잔여 폭 3×(25%-6px) + 2×8px − 버튼 64px = 75% − 66px */
+  flex: 0 0 64px;
+  margin-left: calc(75% - 66px);
+  align-self: center;
+  padding: 5px 0;
+  text-align: center;
+  border: 1px solid var(--text-dim);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Stems 탭이 있으면 빈 칸이 1개 줄어듦: 2×(25%-6px) + 8px − 64px = 50% − 68px */
+.gadget-bar-shift.after-stems {
+  margin-left: calc(50% - 68px);
+}
+
+.gadget-bar-shift:disabled {
+  border-color: var(--line);
+  color: var(--text-dim);
+  cursor: default;
+}
+
+/* 코드표 레이어의 [삭제] 버튼 — 파괴적 동작이라 붉은 톤으로 구분 */
+.voicings-delete {
+  padding: 4px 16px;
+  background: none;
+  border: 1px solid #ff5577;
+  border-radius: 999px;
+  color: #ff5577;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.voicings-delete:active {
+  background: rgba(255, 85, 119, 0.15);
+}
+
+/* Chords 탭 미선택 시 숨김 — display:none이 아닌 visibility인 이유: 칸이 사라지면
+   2페이지 스냅 폭이 깨짐 (자리는 유지, 보이지도 눌리지도 않음) */
+.gadget-bar-shift.hidden {
+  visibility: hidden;
 }
 
 .gadget-tabs::-webkit-scrollbar {
@@ -994,6 +1040,49 @@
   color: var(--text-dim);
   white-space: nowrap;
   cursor: pointer;
+}
+
+/* 박자 점 레이어: BPM 그리드의 모든 박 위치 (코드 유무 무관, 스트립과 함께 흐름) */
+.chords-beats {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0; /* 점들은 절대 배치라 폭 불필요 (스트립과 동일) */
+  pointer-events: none; /* 드래그/탭 판정 방해 금지 */
+}
+
+/* 박자 점: 계층 2단 (사용자 확정 C안) — 일반 박 2px 아주 흐림, 마디 첫박 4px 중간 밝기.
+   코드 시작 눈금점(6px, 0.8)이 가장 크게 남아 앵커 역할 유지 */
+.beat-dot {
+  position: absolute;
+  bottom: 5px; /* 점 중심을 기준선 위 정중앙에 (눈금점 bottom 3px + 크기 차 보정) */
+  width: 2px;
+  height: 2px;
+  margin-left: -1px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  opacity: 0.3;
+}
+
+/* 마디 첫박 = 점 + 세로 눈금선 (사용자 확정) — 코드 점(6px, bottom 3~9px)과 겹쳐도
+   선이 위아래로 3px씩 삐져나와 첫박 위치가 보임 (동그라미를 관통하는 모양) */
+.beat-dot.bar {
+  bottom: 4px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  opacity: 0.6;
+}
+
+.beat-dot.bar::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -4px; /* 점(bottom 4px) 기준 → 스트립 바닥 0~12px 구간을 세로로 관통 */
+  width: 1.5px;
+  height: 12px;
+  margin-left: -0.75px;
+  background: var(--text-dim);
 }
 
 /* 코드 시작 눈금: 기준선 위의 작은 점 (스트립과 함께 흐름) */

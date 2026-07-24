@@ -13,12 +13,15 @@ interface VoicingsSheetProps {
   chord: string // 원래(탭한) 코드 — 표시 조 기준 (피치를 옮겼으면 옮긴 조)
   currentShape: Shape | null // 지금 이 코드에 적용된 운지 (null = 기본 운지 = 목록 첫 번째)
   sameCount: number // 이 곡에서 같은 코드 구간 수 ("전부 바꾸기" 개수 표시)
+  // 추가 모드: 타임라인 길게 누른 지점에 넣을 코드 고르기 — 전부 토글/삭제 없음, 확인 = 추가
+  addMode?: boolean
   strumWhilePlaying: boolean // 재생 중에도 코드 탭 소리 (앱 설정)
   autoStrum: boolean // 재생 중 코드 전환마다 자동 스트럼 (앱 설정)
   onToggleStrumWhilePlaying: () => void
   onToggleAutoStrum: () => void
   onTapShape: (shape: Shape, chord: string) => void // 운지 탭 = 그 코드/운지로 미리듣기
-  onApply: (chord: string, shape: Shape, applyAll: boolean) => void // 확인 = 코드/운지 변경
+  onApply: (chord: string, shape: Shape, applyAll: boolean) => void // 확인 = 코드/운지 변경(또는 추가)
+  onDelete?: () => void // 이 코드 구간 삭제 (편집 모드에서만)
   onClose: () => void
 }
 
@@ -43,12 +46,14 @@ function VoicingsSheet({
   chord,
   currentShape,
   sameCount,
+  addMode = false,
   strumWhilePlaying,
   autoStrum,
   onToggleStrumWhilePlaying,
   onToggleAutoStrum,
   onTapShape,
   onApply,
+  onDelete,
   onClose,
 }: VoicingsSheetProps) {
   // 지금 보고 있는 코드 (칩/검색으로 전환 — 확인 시 이 코드로 변경됨)
@@ -107,6 +112,13 @@ function VoicingsSheet({
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                // 엔터 = 바로 선택 (정확히 일치하는 코드 우선, 없으면 첫 번째 결과) — 칩 탭 생략
+                if (e.key !== 'Enter') return
+                const exact = searchResults.find((c) => c.toLowerCase() === q)
+                const pick = exact ?? searchResults[0]
+                if (pick) switchChord(pick)
+              }}
               placeholder="코드 검색 (예: G, Bbm7)"
             />
           ) : (
@@ -123,23 +135,36 @@ function VoicingsSheet({
               ))}
             </div>
           )}
-          {/* 돋보기 = 검색 열기 (검색 중엔 검색만 닫기) */}
+          {/* 돋보기 = 검색 열기 — 검색 중엔 숨김 (닫기는 ✕ 하나로, 사용자 결정) */}
+          {!searching && (
+            <button
+              className="chord-search-btn"
+              aria-label="코드 검색"
+              onClick={() => {
+                setSearching(true)
+                setQuery('')
+              }}
+            >
+              <svg viewBox="0 0 24 24" className="icon">
+                <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                  <circle cx="10.5" cy="10.5" r="6" />
+                  <path d="M15 15 L20 20" />
+                </g>
+              </svg>
+            </button>
+          )}
+          {/* 검색 중 ✕ = 검색 영역만 닫고 코드표로 복귀, 평소 ✕ = 시트 닫기 (사용자 요청) */}
           <button
-            className="chord-search-btn"
-            aria-label={searching ? '검색 닫기' : '코드 검색'}
+            className="sheet-close"
             onClick={() => {
-              setSearching((s) => !s)
-              setQuery('')
+              if (searching) {
+                setSearching(false)
+                setQuery('')
+              } else {
+                onClose()
+              }
             }}
           >
-            <svg viewBox="0 0 24 24" className="icon">
-              <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                <circle cx="10.5" cy="10.5" r="6" />
-                <path d="M15 15 L20 20" />
-              </g>
-            </svg>
-          </button>
-          <button className="sheet-close" onClick={onClose}>
             ✕
           </button>
         </div>
@@ -176,15 +201,27 @@ function VoicingsSheet({
 
         {!searching && (
           <>
-            {/* 적용 범위 (참고 앱의 "Replace all N chords" 스위치) */}
-            <div className="voicings-row">
-              <span className="voicings-row-label">
-                {isOriginal
-                  ? `같은 ${prettyChord(chord)} 코드 ${sameCount}개 전부 바꾸기`
-                  : `같은 ${prettyChord(chord)} 코드 ${sameCount}개 전부 ${prettyChord(viewChord)}로 바꾸기`}
-              </span>
-              <Switch on={applyAll} label="같은 코드 전부 바꾸기" onToggle={() => setApplyAll((a) => !a)} />
-            </div>
+            {/* 적용 범위 (참고 앱의 "Replace all N chords" 스위치) — 추가 모드에선 의미 없음 */}
+            {!addMode && (
+              <div className="voicings-row">
+                <span className="voicings-row-label">
+                  {isOriginal
+                    ? `같은 ${prettyChord(chord)} 코드 ${sameCount}개 전부 바꾸기`
+                    : `같은 ${prettyChord(chord)} 코드 ${sameCount}개 전부 ${prettyChord(viewChord)}로 바꾸기`}
+                </span>
+                <Switch on={applyAll} label="같은 코드 전부 바꾸기" onToggle={() => setApplyAll((a) => !a)} />
+              </div>
+            )}
+
+            {/* 이 구간 삭제 (편집 모드에서만) — 삭제하면 그 구간은 빈 구간이 됨 */}
+            {!addMode && onDelete && (
+              <div className="voicings-row">
+                <span className="voicings-row-label">이 {prettyChord(chord)} 구간 삭제</span>
+                <button className="voicings-delete" onClick={onDelete}>
+                  삭제
+                </button>
+              </div>
+            )}
 
             {/* 재생 중 코드 소리 설정 (앱 전역 — 닫아도 유지) */}
             <div className="voicings-divider" />
@@ -202,7 +239,7 @@ function VoicingsSheet({
               disabled={!selShape}
               onClick={() => selShape && onApply(viewChord, selShape, applyAll)}
             >
-              확인
+              {addMode ? '이 위치에 추가' : '확인'}
             </button>
           </>
         )}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Player } from './audio/player'
 import TopBar from './components/TopBar'
 import ProgressPage from './components/ProgressPage'
@@ -83,6 +83,8 @@ function App() {
   const BPM_ANALYSIS_VERSION = 2
   const [bpm, setBpm] = useState<number | null | undefined>(undefined)
   const [bpmOffset, setBpmOffset] = useState<number | null>(null) // 첫 박 위치 (메트로놈용)
+  // 마디 첫박 위상 (0~3, bpmOffset 기준 박 인덱스 mod 4) — null = 미지정(코드 다수결로 추정)
+  const [barPhase, setBarPhase] = useState<number | null>(null)
   const [bpmVer, setBpmVer] = useState(BPM_ANALYSIS_VERSION)
   const [bpmAnalyzing, setBpmAnalyzing] = useState(false)
   const [metroOn, setMetroOn] = useState(false) // 메트로놈 on/off (세션 한정 — 저장 안 함)
@@ -177,6 +179,7 @@ function App() {
     }
     setBpm(result?.bpm ?? null) // 실패는 null 저장 → 다음 로드 때 재분석됨
     setBpmOffset(result?.offset ?? null)
+    setBarPhase(null) // 그리드 기준점이 새로 잡히면 기존 첫박 지정은 무효 (다수결 추정으로 복귀)
     setBpmVer(BPM_ANALYSIS_VERSION)
     return result
   }
@@ -371,6 +374,62 @@ function App() {
     setVoicingsTarget(null)
   }
 
+  // ── 코드 추가: 타임라인 길게 누름(박 스냅) → 코드 선택 시트 → 그 지점부터 삽입 ──
+  const [addChordAt, setAddChordAt] = useState<number | null>(null)
+
+  // 추가 시트의 초기 코드: 누른 지점의 코드(없으면 직전 코드, 그것도 없으면 C) — 표시 조 기준
+  const addChordInitial = (() => {
+    if (addChordAt === null) return 'C'
+    const list = chords ?? []
+    const containing = list.find((s) => s.start <= addChordAt && addChordAt < s.end)
+    const before = [...list].reverse().find((s) => s.end <= addChordAt + 0.02)
+    const raw = containing?.chord ?? before?.chord
+    return raw ? transposeName(raw, pitch) : 'C'
+  })()
+
+  // 시트 [이 위치에 추가] = 새 구간 삽입. 기존 코드 위면 분할(기존 코드는 거기까지),
+  // 빈 구간이면 다음 코드 시작(없으면 곡 끝)까지. 저장은 원조 기준, 대표 운지면 지정 생략
+  const handleAddChordApply = (newChord: string, shape: Shape) => {
+    const t = addChordAt
+    if (t === null) return
+    const EPS = 0.02 // 박 스냅 반올림 오차 허용
+    const newRaw = transposeName(newChord, -pitch)
+    const isDefault = shapeFor(newChord)?.frets.join(',') === shape.frets.join(',')
+    const list = [...(chords ?? [])]
+    const next = list.find((s) => s.start > t + EPS)
+    const containingIdx = list.findIndex((s) => s.start <= t + EPS && s.end > t + EPS)
+    let end = next?.start ?? duration
+    if (containingIdx >= 0) {
+      const c = list[containingIdx]
+      end = c.end
+      if (c.start >= t - EPS) {
+        list.splice(containingIdx, 1) // 시작이 같으면 그 구간을 통째로 새 코드로 교체
+      } else {
+        list[containingIdx] = { ...c, end: t } // 안쪽이면 분할 — 기존 코드는 여기까지
+      }
+    }
+    if (end - t < EPS) {
+      setAddChordAt(null)
+      return // 0 길이 구간 보호 (곡 끝을 누른 경우 등)
+    }
+    list.push({ start: t, end, chord: newRaw, shape: isDefault ? undefined : shape })
+    list.sort((a, b) => a.start - b.start)
+    console.log(`코드 추가: ${newChord} @ ${t.toFixed(2)}s ~ ${end.toFixed(2)}s`)
+    setChords(list)
+    setChordsEdited(true) // 수동 편집 곡 — 재분석이 덮지 않음
+    setAddChordAt(null)
+  }
+
+  // ── 코드 삭제: 코드표 레이어의 [삭제] — 그 구간을 비움 (빈 구간이 됨) ──
+  const handleVoicingDelete = () => {
+    const target = voicingsTarget
+    if (target === null || chords == null) return
+    console.log(`코드 삭제: ${target.chord} 구간(#${target.segIndex})`)
+    setChords(chords.filter((_, i) => i !== target.segIndex))
+    setChordsEdited(true) // 수동 편집 곡 — 재분석이 덮지 않음
+    setVoicingsTarget(null)
+  }
+
   // ── 페이지 스와이프: 손가락을 따라 실시간으로 끌리고, 놓으면 스냅 ──
   // (휠 링에서 시작한 터치는 Wheel이 stopPropagation으로 차단 → 여기 안 옴)
   // 성능: 드래그 중에는 React 재렌더링 없이 DOM 스타일을 직접 갱신
@@ -475,6 +534,7 @@ function App() {
         trackE,
         bpm, // undefined(미분석)는 저장돼도 무해 — 다음 로드에서 분석 재시도됨
         bpmOffset,
+        barPhase,
         bpmVer,
         chords,
         songKey,
@@ -485,7 +545,7 @@ function App() {
       })
     }, 300)
     return () => clearTimeout(timer) // 300ms 안에 또 바뀌면 이전 예약 취소 (디바운스)
-  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset, bpmVer, chords, songKey, chordsVer, chordShapes, chordsEdited, stemMix])
+  }, [currentId, tempo, pitch, loops, posMarkers, trackS, trackE, bpm, bpmOffset, barPhase, bpmVer, chords, songKey, chordsVer, chordShapes, chordsEdited, stemMix])
 
   // 곡이 끝까지 재생되면 엔진이 알려줌 → 화면 상태 되돌리기
   useEffect(() => {
@@ -531,6 +591,7 @@ function App() {
     player.pitchSemitones = 0
     setBpm(undefined)
     setBpmOffset(null)
+    setBarPhase(null)
     setChords(undefined)
     setSongKey(undefined)
     setStemMix({})
@@ -712,7 +773,8 @@ function App() {
     )
   }
 
-  // ── 박자 탭: 재생 중 박자에 맞춰 탭하면 탭 위상의 평균으로 첫 박을 자동 정렬 ──
+  // ── 첫박 탭: 재생 중 마디의 1박에 맞춰 탭하면 탭 위상의 평균으로 첫 박을 자동 정렬 ──
+  // + 탭이 떨어진 박을 마디 첫박으로 지정 (메트로놈 그리드와 Chords 세로선이 함께 정렬됨)
   // (10ms 버튼 연타는 귀로 맞추기 힘들다는 피드백 → 탭 방식으로 교체)
   const beatTapsRef = useRef<number[]>([]) // 탭 순간 "들리던 소리"의 원곡 시간들
   const lastTapWallRef = useRef(0)
@@ -733,6 +795,7 @@ function App() {
     setTapCount(taps.length)
 
     // 3탭부터 정렬 시작: 박 주기 위의 위상들을 원형 평균 → 그 위상으로 오프셋 이동
+    // (마디당 한 번, 1박에만 탭해도 간격이 박 주기의 배수라 원형 평균은 그대로 동작)
     if (taps.length < 3) return
     const period = 60 / bpm // 원곡 시간 기준 박 간격 (position이 원곡 시간축이라 배속 무관)
     const twoPi = Math.PI * 2
@@ -751,6 +814,29 @@ function App() {
     if (delta > period / 2) delta -= period
     if (delta < -period / 2) delta += period
     handleOffsetNudge(delta)
+
+    // 마지막 탭이 떨어진 박 = 마디 첫박 (정렬된 새 오프셋 기준 박 인덱스 mod 4)
+    const k = Math.round((heard - ((bpmOffset ?? 0) + delta)) / period)
+    setBarPhase(((k % 4) + 4) % 4)
+  }
+
+  // 표시/밀기에 쓰는 실효 첫박 위상: 수동 지정이 있으면 그것, 없으면 코드 구간 시작들의
+  // 박 인덱스 mod4 다수결로 추정 (분석 구간이 마디 스냅되어 있어 대체로 다운비트)
+  const effectiveBarPhase = useMemo(() => {
+    if (barPhase != null) return barPhase
+    if (bpm == null) return 0
+    const period = 60 / bpm
+    const votes = [0, 0, 0, 0]
+    for (const seg of chords ?? []) {
+      const k = Math.round((seg.start - (bpmOffset ?? 0)) / period)
+      votes[((k % 4) + 4) % 4]++
+    }
+    return votes.indexOf(Math.max(...votes))
+  }, [barPhase, bpm, bpmOffset, chords])
+
+  // [1박 ▶]: 첫박을 다음 박으로 한 칸 이동 (4박 순환 — 최대 3번이면 제자리)
+  const handleBarShift = () => {
+    setBarPhase((effectiveBarPhase + 1) % 4)
   }
 
   // ── BPM 탭(탭 템포): 자물쇠 열림 상태에서 박자에 맞춰 탭하면 탭 간격으로 BPM 값을 잡음 ──
@@ -782,6 +868,7 @@ function App() {
     setBpm(newBpm)
     setBpmVer(BPM_ANALYSIS_VERSION) // 수동 확정 값 — 다음 로드 때 자동 재분석이 덮지 않게
     setBpmOffset(taps[taps.length - 1]) // 첫 박 기준점 = 마지막 탭 위치 (그리드가 탭에 정렬됨)
+    setBarPhase(null) // 기준점이 새로 잡히면 기존 첫박 지정은 무효 — 첫박 탭/1박 밀기로 다시 지정
     // 수동 설정 표시 — 진행 중인 백그라운드 분석이 이 값을 덮어쓰지 않게
     bpmEditSeqRef.current++
     manualBpmRef.current = { bpm: newBpm, offset: taps[taps.length - 1] }
@@ -944,6 +1031,7 @@ function App() {
       // (실패도 재시도하는 이유: 분석 로직이 개선되면 자동으로 다시 혜택받도록 — 백그라운드라 부담 없음)
       setBpm(s.bpm)
       setBpmOffset(s.bpmOffset ?? null)
+      setBarPhase(s.barPhase ?? null)
       setBpmVer(s.bpmVer ?? 1)
       setBpmAnalyzing(false)
       setChords(s.chords)
@@ -1027,6 +1115,7 @@ function App() {
       setTrackE(null)
       setBpm(undefined)
       setBpmOffset(null)
+      setBarPhase(null)
       setBpmVer(BPM_ANALYSIS_VERSION)
       setBpmAnalyzing(false)
       setMetroOn(false)
@@ -1152,6 +1241,9 @@ function App() {
         active={activeGadget}
         showStems={currentStemNames != null && currentStemNames.length > 0}
         onSelect={handleGadgetSelect}
+        // [1박 ▶]: Chords 패널을 보면서 첫박(세로선)을 한 박씩 밀어 보정 (그리드 있어야 의미)
+        barShiftEnabled={activeGadget === 'chords' && bpm != null}
+        onBarShift={handleBarShift}
       />
       <div className="gadget-panel">
         {activeGadget === 'volume' && (
@@ -1191,6 +1283,8 @@ function App() {
             duration={duration}
             pitch={pitch}
             bpm={bpm}
+            bpmOffset={bpmOffset}
+            barPhase={effectiveBarPhase}
             // 재생 중엔 엔진 출력 지연만큼 앞서가는 위치를 "지금 들리는 소리" 기준으로 보정
             // ⚠️ 여기에 하드웨어 지연/트랜지션 상쇄를 더하는 시도는 하지 말 것 — 실기기에서
             // 이 형태가 정확하다고 확인됨, 손대면 오히려 어긋남 (2026-07-17 두 차례)
@@ -1203,6 +1297,7 @@ function App() {
             onSeek={handleSeek}
             onPreview={handleChordPreview}
             onShowVoicings={(chord, segIndex) => setVoicingsTarget({ chord, segIndex })}
+            onAddChord={setAddChordAt}
           />
         )}
         {activeGadget === 'bpm' && (
@@ -1276,7 +1371,25 @@ function App() {
           onToggleAutoStrum={() => setAutoStrum((v) => !v)}
           onTapShape={handleVoicingTap}
           onApply={handleVoicingApply}
+          onDelete={handleVoicingDelete}
           onClose={() => setVoicingsTarget(null)}
+        />
+      )}
+
+      {/* 코드 추가 시트 — 타임라인 길게 누른 지점(박 스냅)에 넣을 코드 고르기 (같은 시트 재사용) */}
+      {addChordAt !== null && (
+        <VoicingsSheet
+          chord={addChordInitial}
+          currentShape={null}
+          sameCount={0}
+          addMode
+          strumWhilePlaying={strumWhilePlaying}
+          autoStrum={autoStrum}
+          onToggleStrumWhilePlaying={() => setStrumWhilePlaying((v) => !v)}
+          onToggleAutoStrum={() => setAutoStrum((v) => !v)}
+          onTapShape={handleVoicingTap}
+          onApply={(c, s) => handleAddChordApply(c, s)}
+          onClose={() => setAddChordAt(null)}
         />
       )}
 

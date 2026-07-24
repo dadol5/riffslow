@@ -17,9 +17,12 @@ interface GadgetBarProps {
   active: GadgetId
   showStems: boolean // Stems 탭은 믹서 가능한 곡(스템 있음)에서만 노출 (사용자 결정)
   onSelect: (gadget: GadgetId) => void
+  // [1박 ▶]: 2페이지 우측 끝 액션 버튼 — Chords 첫박(세로선)을 한 박씩 밀어 보정 (사용자 결정)
+  barShiftEnabled: boolean
+  onBarShift: () => void
 }
 
-function GadgetBar({ active, showStems, onSelect }: GadgetBarProps) {
+function GadgetBar({ active, showStems, onSelect, barShiftEnabled, onBarShift }: GadgetBarProps) {
   const tabs = showStems ? TABS : TABS.filter((t) => t.id !== 'stems')
   return (
     <nav className="gadget-tabs">
@@ -32,6 +35,17 @@ function GadgetBar({ active, showStems, onSelect }: GadgetBarProps) {
           {label}
         </button>
       ))}
+      {/* 2페이지의 마지막 칸(우측 끝)에 고정 — margin이 빈 탭 칸을 채워 페이지 폭을 정확히 맞춤.
+          Chords 탭을 선택했을 때만 보임(사용자 요청) — DOM에서 빼면 페이지 폭이 깨지므로 visibility로 숨김 */}
+      <button
+        className={`gadget-bar-shift${showStems ? ' after-stems' : ''}${
+          active === 'chords' ? '' : ' hidden'
+        }`}
+        disabled={!barShiftEnabled}
+        onClick={onBarShift}
+      >
+        1박 ▶
+      </button>
     </nav>
   )
 }

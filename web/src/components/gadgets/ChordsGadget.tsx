@@ -5,7 +5,7 @@
 // 선택된 코드 한 번 더 탭 = 코드표 레이어(운지 포지션 목록) 열기
 // 타임라인 좌우 드래그 = 재생 위치 탐색 (손가락 1:1)
 // 코드명 아래 운지 다이어그램 표시 (좁은 블록은 이름만)
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { ChordSegment } from '../../audio/chords'
 import { prettyChord, transposeName } from '../../utils/music'
 import { shapeMatches, type Shape } from '../../utils/voicings'
@@ -20,6 +20,9 @@ const MIN_DIAGRAM_PX = 52
 // 이 픽셀 미만 움직임은 드래그가 아닌 탭으로 판정 (코드 탭 시크와 공존)
 const DRAG_THRESHOLD_PX = 5
 
+// 길게 누름 = 코드 추가 (핀 홀드 삭제와 같은 감각의 시간)
+const HOLD_ADD_MS = 700
+
 interface ChordsGadgetProps {
   hasTrack: boolean
   analyzing: boolean // 분석 진행 중 여부
@@ -28,10 +31,13 @@ interface ChordsGadgetProps {
   duration: number // 곡 길이 (초) — 드래그 탐색 범위 제한용
   pitch: number // 피치 반음 — 코드명/운지를 이동된 조로 표시 (사용자 요청)
   bpm: number | null | undefined // BPM 그리드 — 같은 코드가 여러 마디면 마디마다 반복 표시용
+  bpmOffset: number | null // 첫 박 위치 (초) — 박자 점 그리드 정렬용
+  barPhase: number // 마디 첫박 위상 (0~3, bpmOffset 기준 박 인덱스 mod 4 — App이 수동 지정/다수결로 결정)
   chordShapes: Record<string, Shape> // 코드별로 고른 운지 ("같은 코드 전부 적용" — 키 = 표시 조 코드명)
   onSeek: (pos: number) => void
   onPreview: (chord: string, shape?: Shape) => void // 코드 탭 미리듣기 (적용된 운지 소리로)
   onShowVoicings: (chord: string, segIndex: number) => void // 선택된 코드 한 번 더 탭 = 코드표 레이어
+  onAddChord: (startSec: number) => void // 타임라인 길게 누름 = 그 지점(박 스냅)에 코드 추가
 }
 
 function ChordsGadget({
@@ -42,10 +48,13 @@ function ChordsGadget({
   duration,
   pitch,
   bpm,
+  bpmOffset,
+  barPhase,
   chordShapes,
   onSeek,
   onPreview,
   onShowVoicings,
+  onAddChord,
 }: ChordsGadgetProps) {
   // 드래그 상태 — moved가 true가 된 뒤로는 탭(코드 시크)을 무시
   const dragRef = useRef<{
@@ -67,6 +76,14 @@ function ChordsGadget({
   // (추후 계획: 선택된 코드를 한 번 더 탭하면 수정 폼 — 그래서 재탭 토글 해제는 안 함)
   const [selected, setSelected] = useState<number | null>(null)
 
+  // 길게 누름(코드 추가) 판정 — 타이머 발동 시점의 최신 재생 위치를 읽기 위한 미러
+  // (재생 중엔 스트립이 흘러가므로, 시트가 열리는 순간 손가락 아래 보이는 지점을 기준으로)
+  const positionRef = useRef(position)
+  positionRef.current = position
+  const holdTimerRef = useRef(0)
+
+  const cancelHold = () => window.clearTimeout(holdTimerRef.current)
+
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (dragRef.current) return // 두 번째 손가락 무시
     suppressTapRef.current = false
@@ -76,6 +93,24 @@ function ChordsGadget({
       startPos: position,
       moved: false,
     }
+    // 길게 누름 예약: 0.7초 동안 안 움직이고 안 떼면 그 지점에 코드 추가
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX
+    holdTimerRef.current = window.setTimeout(() => {
+      suppressTapRef.current = true // 이어지는 click(시크/선택/해제) 무시
+      dragRef.current = null // 홀드가 발동하면 이 제스처의 드래그 판정 종료
+      // 화면 x → 원곡 시간: 중앙(플레이헤드) 기준 거리 환산
+      const t = positionRef.current + (x - rect.left - rect.width / 2) / PX_PER_SEC
+      let snapped = Math.min(duration, Math.max(0, t))
+      // 박 스냅 (사용자 확정 — 반마디 코드도 넣을 수 있게 마디가 아닌 박 단위)
+      if (bpm) {
+        const beatLen = 60 / bpm
+        const offset = bpmOffset ?? 0
+        snapped = offset + Math.round((snapped - offset) / beatLen) * beatLen
+        snapped = Math.min(duration, Math.max(0, snapped))
+      }
+      onAddChord(snapped)
+    }, HOLD_ADD_MS)
   }
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -87,6 +122,7 @@ function ChordsGadget({
       drag.moved = true
       suppressTapRef.current = true
       setDragging(true)
+      cancelHold() // 드래그로 확정되면 길게 누름 취소
       // 드래그 확정 후에만 캡처 — 캡처가 탭의 click 이벤트를 가로채는 것 방지
       e.currentTarget.setPointerCapture(e.pointerId)
     }
@@ -96,6 +132,7 @@ function ChordsGadget({
   }
 
   const handlePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    cancelHold() // 홀드 시간 전에 떼면 탭/드래그로 처리
     if (dragRef.current?.pointerId !== e.pointerId) return
     dragRef.current = null
     setDragging(false)
@@ -123,6 +160,31 @@ function ChordsGadget({
     }
   })
 
+  // 박자 점: BPM 그리드(첫 박 + k·60/bpm)를 곡 전체에 점으로 표시 (코드 유무와 무관 — 사용자 요청)
+  // 계층 2단(사용자 확정): 마디 첫박 = 중간 크기, 나머지 박 = 아주 흐리게 — 코드 점(6px)이 주인공 유지
+  // position이 바뀌어도 그리드는 그대로라 useMemo로 같은 엘리먼트를 재사용 (재생 중 리렌더 비용 0)
+  const beatDots = useMemo(() => {
+    if (!bpm || duration <= 0) return null
+    const beatLen = 60 / bpm
+    // 첫 박 오프셋을 [0, beatLen) 안으로 정규화 — 곡 처음(0초)부터 그리드를 깔기 위함
+    const offset = bpmOffset ?? 0
+    const phase = offset - Math.floor(offset / beatLen) * beatLen
+    // 첫박 위상(barPhase)은 bpmOffset 기준 박 인덱스 — 여기 k는 정규화된 phase 기준이라 변환
+    const downPhase = (((barPhase + Math.floor(offset / beatLen)) % 4) + 4) % 4
+    const count = Math.floor((duration - phase) / beatLen) + 1
+    return (
+      <div className="chords-beats">
+        {Array.from({ length: count }, (_, k) => (
+          <span
+            key={k}
+            className={`beat-dot${k % 4 === downPhase ? ' bar' : ''}`}
+            style={{ left: (phase + k * beatLen) * PX_PER_SEC }}
+          />
+        ))}
+      </div>
+    )
+  }, [bpm, bpmOffset, barPhase, duration])
+
   // 플레이헤드(중앙 세로선)가 운지 그림 위를 지나는 동안만 선 가운데를 뚫음 (그림이 없으면 온전한 선)
   // 그림은 시작 눈금 오른쪽에 붙음: x = 시작 ~ +49px(그림 폭 — 패딩 2px는 -2px 보정으로 상쇄)
   // 판정은 가장자리보다 4px 안쪽 — 스트립 transform 트랜지션(90ms)이 늦게 따라와서
@@ -135,7 +197,8 @@ function ChordsGadget({
   })
 
   // 타임라인을 그릴 수 없는 상태들 — 안내 문구만
-  if (!hasTrack || analyzing || chords == null || chords.length === 0) {
+  // (빈 배열은 제외: 전부 삭제했거나 분석이 못 찾은 상태 — 빈 타임라인을 그려서 길게 누름 추가 가능)
+  if (!hasTrack || analyzing || chords == null) {
     let text: string
     if (!hasTrack) {
       text = '—'
@@ -171,6 +234,8 @@ function ChordsGadget({
         className="chords-strip"
         style={{ transform: `translateX(${-position * PX_PER_SEC}px)` }}
       >
+        {/* 박자 점은 코드 아이템보다 먼저 — 현재 코드의 네온 눈금점이 위에 그려지게 */}
+        {beatDots}
         {items.map((seg, i) => {
           const active = position >= seg.start && position < seg.end
           // 다음 코드 시작까지의 공간이 좁으면 다이어그램 생략 (겹침 방지)
